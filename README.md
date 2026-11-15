@@ -60,6 +60,33 @@ curl -s localhost:8081/.well-known/jwks.json                             # publi
 
 Errors are RFC 7807 `application/problem+json`.
 
+### Through the gateway (port 8080)
+
+Clients only talk to the gateway. Run auth and gateway together (two terminals):
+
+```bash
+scripts/run-local.sh auth
+scripts/run-local.sh gateway
+
+curl -s -X POST localhost:8080/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"password123"}'            # same as auth, via the gateway
+curl -i localhost:8080/api/orders/1                                      # 401 problem+json, no token
+curl -i localhost:8080/api/orders/1 -H "Authorization: Bearer <accessToken>"
+```
+
+| Path | Routed to | Token needed |
+|---|---|---|
+| `/api/auth/**` | auth-service | no |
+| `GET /api/products/**` | catalog-service | no |
+| other `/api/products/**` | catalog-service | yes |
+| `/api/orders/**` | order-service | yes |
+| anything else | nothing | denied (401) |
+
+The gateway checks the JWT with auth-service's public key (JWKS: signature, expiry, issuer), removes any
+`X-User-Id` / `X-User-Roles` the client sent, sets them from the token, and adds `X-Correlation-Id`
+(kept from the request if it is a safe value, otherwise generated). Downstream addresses are set with
+`AUTH_URL`, `CATALOG_URL`, `ORDER_URL` and `AUTH_JWKS_URI`.
+
 The Postgres init script runs only when the data volume is empty. If you change passwords in
 `.env` later, recreate the volume: `docker compose -f deploy/compose.infra.yml down -v`.
 
