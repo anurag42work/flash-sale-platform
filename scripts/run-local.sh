@@ -35,6 +35,11 @@ case "$svc" in
   gateway) ;; # no database
 esac
 
+if [ "$svc" = auth ] && [ -z "${JWT_PRIVATE_KEY:-}" ] && [ ! -f keys/jwt-private.pem ]; then
+  echo "Missing JWT signing keys. Run: scripts/gen-dev-keys.sh" >&2
+  exit 1
+fi
+
 echo "Building $module ..."
 ./mvnw -q -pl "$module" -am -DskipTests package
 

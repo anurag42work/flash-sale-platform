@@ -35,6 +35,31 @@ scripts/run-local.sh catalog
 curl http://localhost:8082/actuator/health            # {"status":"UP",...}
 ```
 
+### Try the auth service
+
+```bash
+scripts/gen-dev-keys.sh          # once: RSA key pair for signing JWTs (keys/ is git-ignored)
+scripts/run-local.sh auth        # port 8081
+
+curl -i -X POST localhost:8081/api/auth/register -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"password123"}'            # 201
+curl -s -X POST localhost:8081/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"password123"}'            # accessToken + refreshToken
+curl -s -X POST localhost:8081/api/auth/refresh -H 'Content-Type: application/json' \
+  -d '{"refreshToken":"<refreshToken from login>"}'                      # new pair; the old token is now revoked
+curl -s localhost:8081/.well-known/jwks.json                             # public key used by the gateway
+```
+
+| Endpoint | Result |
+|---|---|
+| `POST /api/auth/register` | 201 user, 400 invalid input, 409 email taken |
+| `POST /api/auth/login` | 200 tokens (access token: RS256 JWT, 15 min), 401 wrong email or password |
+| `POST /api/auth/refresh` | 200 new token pair (rotation), 401 invalid/expired/reused token; reuse revokes the whole session |
+| `POST /api/auth/logout` | 204, the session's refresh tokens are revoked |
+| `GET /.well-known/jwks.json` | public signing key (JWKS) |
+
+Errors are RFC 7807 `application/problem+json`.
+
 The Postgres init script runs only when the data volume is empty. If you change passwords in
 `.env` later, recreate the volume: `docker compose -f deploy/compose.infra.yml down -v`.
 
