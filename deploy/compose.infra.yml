@@ -54,6 +54,9 @@ services:
     mem_limit: 768m
     environment:
       KAFKA_HEAP_OPTS: "-Xmx384m -Xms384m"
+      # Store data on the kafkadata volume (the image default is /tmp/kafka-logs inside the container,
+      # which is lost when the container is recreated).
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
       # Single node in KRaft mode: this broker is also its own controller (no ZooKeeper).
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
