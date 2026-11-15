@@ -87,6 +87,35 @@ The gateway checks the JWT with auth-service's public key (JWKS: signature, expi
 (kept from the request if it is a safe value, otherwise generated). Downstream addresses are set with
 `AUTH_URL`, `CATALOG_URL`, `ORDER_URL` and `AUTH_JWKS_URI`.
 
+### Catalog and orders
+
+`scripts/run-local.sh` turns on the `dev` profile, so catalog-service seeds **10,000 products with 100 units
+each** on an empty database. Without the gateway, send the identity header yourself (the gateway sets it from
+the JWT in the real flow):
+
+```bash
+scripts/run-local.sh catalog     # port 8082
+scripts/run-local.sh order       # port 8083
+
+curl -s 'localhost:8082/api/products?page=0&size=5&sort=price,desc'
+curl -s localhost:8082/api/products/42                                   # includes "available"
+curl -s -X POST localhost:8083/api/orders -H 'Content-Type: application/json' \
+  -H 'X-User-Id: 11111111-2222-3333-4444-555555555555' \
+  -d '{"items":[{"productId":42,"quantity":3},{"productId":43,"quantity":1}]}'   # 201, status PENDING
+```
+
+| Endpoint | Notes |
+|---|---|
+| `GET /api/products` | public; `page`, `size` (max 100), `sort` = `id`/`name`/`price` + `,asc`/`,desc` |
+| `GET /api/products/{id}` | public; 404 if missing or inactive |
+| `POST` / `PUT /api/products` | ADMIN only (`X-User-Roles`); 401 without user, 403 without role, 409 duplicate SKU |
+| `POST /internal/inventory/{id}/reserve`, `/release` | service-to-service only (not routed by the gateway) |
+| `POST /api/orders` | reserves stock at catalog, saves a PENDING order with price snapshot; 409 `OUT_OF_STOCK`, 422 unknown product, 503 catalog down or slow (1 s connect / 2 s read timeout) |
+| `GET /api/orders/{id}`, `GET /api/orders` | own orders only (someone else's: 404), newest first |
+
+> Stock reservation is **deliberately naive** in this version (read, check, write with no lock). It oversells
+> under concurrency; incident 001 reproduces and fixes it.
+
 The Postgres init script runs only when the data volume is empty. If you change passwords in
 `.env` later, recreate the volume: `docker compose -f deploy/compose.infra.yml down -v`.
 
