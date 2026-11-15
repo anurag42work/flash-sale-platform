@@ -4,3 +4,6 @@ target/
 *.iml
 .env
 *.log
+# Private keys (JWT signing keys are generated locally, never committed).
+*.pem
+*.key

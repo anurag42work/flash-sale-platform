@@ -1,2 +1,6 @@
 * text=auto
+# Shell scripts and the Maven wrapper run in Linux containers / Git Bash: keep LF.
 *.sh text eol=lf
+mvnw text eol=lf
+# Windows batch files need CRLF.
+*.cmd text eol=crlf

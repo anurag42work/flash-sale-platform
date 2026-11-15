@@ -13,7 +13,7 @@ flash-sale-platform/            parent pom (packaging pom), groupId com.flashsal
 ├── catalog-service/   :8082
 ├── order-service/     :8083
 └── payment-service/   :8084
-deploy/compose.infra.yml        postgres:16 :5432 · redis:7 :6379 · apache/kafka (KRaft) :9092
+deploy/compose.infra.yml        postgres:16.16 :5432 · redis:7.4 :6379 · apache/kafka:3.9.1 (KRaft) :9092
 ```
 
 Package by feature inside each service, e.g. `com.flashsale.order.{order,idempotency,outbox,config}`.
@@ -82,6 +82,9 @@ Plugins: `spring-boot-maven-plugin` (services only), surefire runs `*Test`, fail
 | order-service | same as catalog (`RestClient` is in `spring-web`) | same; `MockRestServiceServer` from spring-test |
 | payment-service | `web`, `actuator`, `data-jpa`, `flyway-core`, `flyway-database-postgresql`, `postgresql` (skeleton) | `starter-test`, Testcontainers (3 above) |
 
+Scaffold (step 1.1) adds only what the skeletons use; security/oauth2 and validation arrive with
+steps 1.2–1.4. Resolved versions: Boot 3.5.16, Spring Cloud 2025.0.3, Maven 3.9.16 (wrapper 3.3.4).
+
 Not added until needed: Redis (Day 2 rate limiting / Day 4 cache), Kafka + Resilience4j (Day 2),
 Micrometer Prometheus + tracing (Day 4).
 
@@ -99,4 +102,4 @@ Micrometer Prometheus + tracing (Day 4).
 | 8 | Tests | failsafe for `*IT` (containers), surefire for unit | Everything in surefire | Fast `./mvnw test` locally vs one plugin |
 | 9 | Gateway test downstream | JDK `com.sun.net.httpserver.HttpServer` | WireMock | No new library vs nicer API |
 | 10 | DB users | One Postgres role per service DB | Shared superuser | Ownership isolation vs fewer env vars |
-| 11 | Kafka image | `apache/kafka` (official, arm64, KRaft) | `bitnami/kafka` | Bitnami images are no longer freely maintained |
+| 11 | Kafka image | `apache/kafka:3.9.1` (official, arm64, KRaft; 3.9.2 amd64 image was broken on 2026-11-15) | `bitnami/kafka` | Bitnami images are no longer freely maintained |
