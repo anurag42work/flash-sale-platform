@@ -10,10 +10,17 @@ import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class AuthApplicationIT {
+
+    @DynamicPropertySource
+    static void jwtKeys(DynamicPropertyRegistry registry) {
+        TestKeys.register(registry);
+    }
 
     @Autowired
     TestRestTemplate rest;

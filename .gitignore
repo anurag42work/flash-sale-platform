@@ -5,5 +5,6 @@ target/
 .env
 *.log
 # Private keys (JWT signing keys are generated locally, never committed).
+keys/
 *.pem
 *.key

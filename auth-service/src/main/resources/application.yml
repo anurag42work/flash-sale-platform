@@ -17,6 +17,16 @@ spring:
       # Flyway owns the schema. Hibernate only checks that entities match it.
       ddl-auto: validate
 
+auth:
+  token:
+    issuer: ${JWT_ISSUER:flash-sale-auth}
+    access-token-ttl: 15m
+    refresh-token-ttl: 7d
+    # PEM key pair made by scripts/gen-dev-keys.sh (git-ignored keys/ folder, paths relative to the repo root).
+    # On a server, point these at mounted secret files, e.g. JWT_PRIVATE_KEY=file:/run/secrets/jwt-private.pem
+    public-key: ${JWT_PUBLIC_KEY:file:keys/jwt-public.pem}
+    private-key: ${JWT_PRIVATE_KEY:file:keys/jwt-private.pem}
+
 management:
   endpoints:
     web:
