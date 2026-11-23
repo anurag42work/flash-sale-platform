@@ -5,6 +5,8 @@ import com.flashsale.auth.account.InvalidCredentialsException;
 import com.flashsale.auth.token.InvalidRefreshTokenException;
 import java.util.Map;
 import java.util.TreeMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -22,6 +24,8 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
  */
 @RestControllerAdvice
 class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
     /** 400 with one message per invalid field, e.g. "errors": {"email": "must be a well-formed email address"}. */
     @Override
@@ -47,5 +51,16 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static ProblemDetail problem(HttpStatus status, String detail) {
         return ProblemDetail.forStatusAndDetail(status, detail);
+    }
+
+    /**
+     * Last resort for anything not handled above (database down, a bug). Logged with the stack trace; the client
+     * gets a ProblemDetail without internal details (no exception message, host names or SQL).
+     */
+    @ExceptionHandler(Exception.class)
+    ProblemDetail unexpected(Exception ex) {
+        log.error("Unexpected error", ex);
+        return ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR,
+                "Unexpected error, please try again later");
     }
 }

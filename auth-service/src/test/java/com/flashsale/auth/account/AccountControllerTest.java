@@ -60,6 +60,30 @@ class AccountControllerTest {
         verifyNoInteractions(accounts);
     }
 
+    /** BCrypt uses at most 72 BYTES. 40 x 'é' is 40 characters (passes @Size) but 80 bytes in UTF-8. */
+    @Test
+    void registerWithPasswordOver72BytesReturns400() throws Exception {
+        String password = "é".repeat(40);
+
+        mvc.perform(json("/api/auth/register", "{\"email\":\"a@example.com\",\"password\":\"" + password + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errors.password").value(containsString("72 bytes")));
+        verifyNoInteractions(accounts);
+    }
+
+    /** Anything unexpected (DB down, a bug) is still a ProblemDetail, and leaks no internal details. */
+    @Test
+    void unexpectedErrorReturns500ProblemWithoutDetails() throws Exception {
+        given(accounts.login(any())).willThrow(new IllegalStateException("connection to db-host:5432 refused"));
+
+        mvc.perform(json("/api/auth/login", "{\"email\":\"a@example.com\",\"password\":\"password123\"}"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.detail").value("Unexpected error, please try again later"))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("db-host"))));
+    }
+
     @Test
     void malformedJsonReturns400Problem() throws Exception {
         mvc.perform(json("/api/auth/login", "{not json"))

@@ -19,6 +19,7 @@ final class FakeDownstream {
 
     private final HttpServer server;
     private final AtomicReference<Headers> lastRequest = new AtomicReference<>();
+    private final AtomicReference<String> lastPath = new AtomicReference<>();
 
     FakeDownstream(RSAKey signingKey) {
         try {
@@ -30,6 +31,7 @@ final class FakeDownstream {
         server.createContext("/.well-known/jwks.json", exchange -> respond(exchange, jwks));
         server.createContext("/", exchange -> {
             lastRequest.set(exchange.getRequestHeaders());
+            lastPath.set(exchange.getRequestURI().getRawPath());
             respond(exchange, "{\"downstream\":\"ok\"}");
         });
         server.start();
@@ -44,8 +46,14 @@ final class FakeDownstream {
         return lastRequest.get();
     }
 
+    /** Raw (still encoded) path the downstream service received, or null. */
+    String lastPath() {
+        return lastPath.get();
+    }
+
     void reset() {
         lastRequest.set(null);
+        lastPath.set(null);
     }
 
     private static void respond(HttpExchange exchange, String json) throws IOException {

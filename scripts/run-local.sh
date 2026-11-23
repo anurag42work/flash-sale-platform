@@ -35,6 +35,10 @@ case "$svc" in
   gateway) ;; # no database
 esac
 
+# Listen on 127.0.0.1 only. catalog and order trust X-User-Id / X-User-Roles from the gateway and /internal/**
+# has no auth, so they must never be reachable from the network (e.g. other devices on the same Wi-Fi).
+export SERVER_ADDRESS=${SERVER_ADDRESS:-127.0.0.1}
+
 # dev profile: catalog seeds 10,000 products on an empty database.
 export SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE:-dev}
 

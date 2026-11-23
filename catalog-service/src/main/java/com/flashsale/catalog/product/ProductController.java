@@ -12,6 +12,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import java.net.URI;
+import java.util.Locale;
 import java.util.Set;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -76,7 +77,7 @@ class ProductController {
     private static Sort parseSort(String sort) {
         String[] parts = sort.split(",");
         String field = parts[0].trim();
-        String direction = parts.length > 1 ? parts[1].trim().toLowerCase() : "asc";
+        String direction = parts.length > 1 ? parts[1].trim().toLowerCase(Locale.ROOT) : "asc";
         if (parts.length > 2 || !SORTABLE.contains(field) || !Set.of("asc", "desc").contains(direction)) {
             throw new BadRequestException("sort must be one of " + SORTABLE + " followed by ,asc or ,desc");
         }
