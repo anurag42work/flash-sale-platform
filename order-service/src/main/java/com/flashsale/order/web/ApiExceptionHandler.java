@@ -91,4 +91,15 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
                 "Catalog service is unavailable, try again later");
     }
+
+    /**
+     * Last resort for anything not handled above (database down, a bug). Logged with the stack trace; the client
+     * gets a ProblemDetail without internal details (no exception message, host names or SQL).
+     */
+    @ExceptionHandler(Exception.class)
+    ProblemDetail unexpected(Exception ex) {
+        log.error("Unexpected error", ex);
+        return ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR,
+                "Unexpected error, please try again later");
+    }
 }

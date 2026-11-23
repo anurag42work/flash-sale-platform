@@ -10,6 +10,7 @@ import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.gen.RSAKeyGenerator;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
+import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
@@ -17,8 +18,11 @@ import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -44,6 +48,9 @@ class GatewaySecurityTest {
 
     @Autowired
     WebTestClient client;
+
+    @LocalServerPort
+    int port;
 
     @BeforeEach
     void resetDownstream() {
@@ -118,6 +125,35 @@ class GatewaySecurityTest {
         client.get().uri("/api/products/42").exchange()
                 .expectStatus().isOk();
         assertThat(DOWNSTREAM.lastRequest()).isNotNull();
+    }
+
+    /**
+     * Path traversal: a public route must not be usable to reach a path the gateway doesn't route, such as
+     * catalog's /internal/inventory API (Tomcat would normalise "/api/products/../../internal/..." downstream).
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/api/products/../../internal/inventory/1/reserve",
+            "/api/products/..%2F..%2Finternal/inventory/1/reserve",
+            "/api/products/%2e%2e/%2e%2e/internal/inventory/1/reserve",
+            "/api/products/..;/..;/internal/inventory/1/reserve",
+            "/api/products/%252e%252e/%252e%252e/internal/inventory/1/reserve"})
+    void traversalFromARoutedPathNeverReachesInternalPaths(String path) {
+        // A valid USER token: authentication passes, so only path handling stands between us and /internal.
+        int status = client.post().uri(URI.create("http://localhost:" + port + path))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token(UUID.randomUUID(), List.of("USER")))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue("{}")
+                .exchange().returnResult(String.class).getStatus().value();
+
+        String reached = DOWNSTREAM.lastPath();
+        System.out.printf("traversal %s -> status %d, downstream path %s%n", path, status, reached);
+        if (reached != null) {
+            // Whatever got through must stay a plain path under /api/products that Tomcat can't resolve elsewhere.
+            assertThat(reached).as("downstream path for " + path).startsWith("/api/products/");
+            assertThat(reached.toLowerCase()).as("downstream path for " + path)
+                    .doesNotContain("..").doesNotContain("%2e").doesNotContain("%2f").doesNotContain("%5c")
+                    .doesNotContain(";");
+        }
     }
 
     // ---- identity headers ----

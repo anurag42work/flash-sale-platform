@@ -11,10 +11,10 @@ public final class AccountDtos {
     private AccountDtos() {
     }
 
-    // BCrypt only uses the first 72 bytes of a password, so longer passwords are rejected.
+    // BCrypt accepts at most 72 BYTES (it throws for more), so longer passwords are rejected with 400.
     public record RegisterRequest(
             @NotBlank @Email @Size(max = 254) String email,
-            @NotBlank @Size(min = 8, max = 72) String password) {
+            @NotBlank @Size(min = 8, max = 72) @MaxUtf8Bytes(72) String password) {
     }
 
     public record LoginRequest(

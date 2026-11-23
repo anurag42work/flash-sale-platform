@@ -190,6 +190,18 @@ class OrderControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
+    /** Anything unexpected (DB down, a bug) is still a ProblemDetail, and leaks no internal details. */
+    @Test
+    void unexpectedErrorReturns500ProblemWithoutDetails() throws Exception {
+        given(orders.get(eq(USER), any())).willThrow(new IllegalStateException("connection to db-host:5432 refused"));
+
+        mvc.perform(get("/api/orders/" + UUID.randomUUID()).header("X-User-Id", USER.toString()))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.detail").value("Unexpected error, please try again later"))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("db-host"))));
+    }
+
     private static MockHttpServletRequestBuilder asUser(MockHttpServletRequestBuilder request) {
         return request.contentType(MediaType.APPLICATION_JSON).header("X-User-Id", USER.toString());
     }
