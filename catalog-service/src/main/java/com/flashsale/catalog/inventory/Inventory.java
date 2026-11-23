@@ -34,8 +34,5 @@ public class Inventory {
         return available;
     }
 
-    void setAvailable(int available, Instant now) {
-        this.available = available;
-        this.updatedAt = now;
-    }
+    // No setter on purpose: stock changes only through the atomic UPDATEs in InventoryService (incident 001).
 }
