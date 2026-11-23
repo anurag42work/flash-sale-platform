@@ -11,7 +11,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * testcontainers.reuse.enable=true (see README); otherwise a fresh one is started.
  */
 @TestConfiguration(proxyBeanMethods = false)
-class TestcontainersConfiguration {
+public class TestcontainersConfiguration {
 
     @Bean
     @ServiceConnection

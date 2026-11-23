@@ -35,6 +35,9 @@ case "$svc" in
   gateway) ;; # no database
 esac
 
+# dev profile: catalog seeds 10,000 products on an empty database.
+export SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE:-dev}
+
 if [ "$svc" = auth ] && [ -z "${JWT_PRIVATE_KEY:-}" ] && [ ! -f keys/jwt-private.pem ]; then
   echo "Missing JWT signing keys. Run: scripts/gen-dev-keys.sh" >&2
   exit 1

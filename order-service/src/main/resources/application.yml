@@ -17,6 +17,13 @@ spring:
       # Flyway owns the schema. Hibernate only checks that entities match it.
       ddl-auto: validate
 
+catalog:
+  # localhost for run-local.sh, the container name on the VM.
+  base-url: ${CATALOG_URL:http://localhost:8082}
+  # Fail fast instead of piling up waiting threads when catalog is slow or down.
+  connect-timeout: 1s
+  read-timeout: 2s
+
 management:
   endpoints:
     web:
