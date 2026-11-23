@@ -49,15 +49,18 @@ curl http://localhost:8082/actuator/health            # {"status":"UP",...}
 on an empty database) and listens on **127.0.0.1 only**. catalog and order trust the identity headers set
 by the gateway, and `/internal/**` has no auth, so those services must never be reachable from the network.
 
-Each JVM uses about 200–250 MB. On a small laptop, run only 1–2 services at a time. The full flow
-through the gateway (4 services) is meant for the VM.
+Each JVM uses about 200–250 MB. On a small laptop, run 1–2 services at a time for everyday work.
+The full flow through the gateway (auth, catalog, order, gateway) also runs on an 8 GB laptop if other
+apps are closed (4 JVMs used about 190–245 MB each). Start them one at a time and wait until each
+`/actuator/health` is `UP` before starting the next, so only one Maven build runs at a time.
 
 The Postgres init script runs only when the data volume is empty. If you change passwords in `.env`
 later, recreate the volume: `docker compose -f deploy/compose.infra.yml down -v`.
 
 ## End-to-end flow through the gateway
 
-Clients only talk to the gateway (port 8080). Start auth, catalog, order and gateway (one terminal each), then:
+Clients only talk to the gateway (port 8080). Start auth, catalog, order and gateway (one terminal each), then
+(checked end to end on the laptop on 2026-11-23):
 
 ```bash
 # Register and log in
