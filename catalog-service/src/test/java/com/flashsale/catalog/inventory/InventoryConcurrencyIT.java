@@ -1,6 +1,7 @@
 package com.flashsale.catalog.inventory;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flashsale.catalog.TestcontainersConfiguration;
 import java.util.ArrayList;
@@ -18,11 +19,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * Incident 001: overselling. A flash sale is many buyers reserving the same product at the same moment.
@@ -39,11 +42,14 @@ class InventoryConcurrencyIT {
     @Autowired
     TestRestTemplate rest;
 
+    @Autowired
+    JdbcTemplate jdbc;
+
     @Test
     void concurrentReservesNeverSellMoreThanTheStock() throws Exception {
         long productId = createProduct(STOCK);
 
-        List<Integer> statuses = reserveConcurrently(productId, BUYERS);
+        List<Integer> statuses = callConcurrently(productId, "reserve", BUYERS);
 
         long ok = statuses.stream().filter(s -> s == 200).count();
         long outOfStock = statuses.stream().filter(s -> s == 409).count();
@@ -62,12 +68,36 @@ class InventoryConcurrencyIT {
         soft.assertAll();
     }
 
+    /** Release has the same read-modify-write shape: concurrent releases must all be counted. */
+    @Test
+    void concurrentReleasesAreAllCounted() throws Exception {
+        long productId = createProduct(0);
+
+        List<Integer> statuses = callConcurrently(productId, "release", STOCK);
+
+        int finalStock = available(productId);
+        System.out.printf("%n=== INCIDENT 001 (release): %d concurrent releases -> final stock=%d (expected %d) ===%n%n",
+                STOCK, finalStock, STOCK);
+        assertThat(statuses).containsOnly(200);
+        assertThat(finalStock).isEqualTo(STOCK);
+    }
+
+    /** Safety net in the database: even a buggy code path can't store negative stock. */
+    @Test
+    void databaseRejectsNegativeStock() {
+        long productId = createProduct(1);
+
+        assertThatThrownBy(() -> jdbc.update("UPDATE inventory SET available = -1 WHERE product_id = ?", productId))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("ck_inventory_available");
+    }
+
     /**
      * Starts all calls at the same moment: each thread waits at {@code ready} until all are created, then all
      * block on {@code start}, which the test opens once. Without the latch, early threads would finish before
      * late ones start and the race would rarely show.
      */
-    private List<Integer> reserveConcurrently(long productId, int calls) throws Exception {
+    private List<Integer> callConcurrently(long productId, String action, int calls) throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(calls);
         CountDownLatch ready = new CountDownLatch(calls);
         CountDownLatch start = new CountDownLatch(1);
@@ -77,7 +107,7 @@ class InventoryConcurrencyIT {
                 futures.add(pool.submit(() -> {
                     ready.countDown();
                     start.await();
-                    return post("/internal/inventory/" + productId + "/reserve", Map.of("quantity", 1), false)
+                    return post("/internal/inventory/" + productId + "/" + action, Map.of("quantity", 1), false)
                             .getStatusCode().value();
                 }));
             }

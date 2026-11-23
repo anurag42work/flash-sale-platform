@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Reproduced (step 1.5). Fix: step 1.6 |
+| Status | Fixed (step 1.6) |
 | Service | catalog-service, `POST /internal/inventory/{productId}/reserve` |
 | Branch | `incident/001-overselling` |
 | Test | `catalog-service/src/test/java/com/flashsale/catalog/inventory/InventoryConcurrencyIT.java` |
@@ -67,11 +67,32 @@ never reaches the "< 1" check. So nobody ever gets a 409.
 `release` has the same pattern, so concurrent releases also lose updates. That case gives back too
 little stock instead of selling too much.
 
-## Fix
-To be added in step 1.6: an atomic conditional `UPDATE ... WHERE available >= :qty`, plus `CHECK (available >= 0)`.
+## Fix (step 1.6)
+- `InventoryService.reserve` is now one atomic statement:
+  `UPDATE inventory SET available = available - :qty WHERE product_id = :id AND available >= :qty RETURNING available`.
+  0 rows → `409 OUT_OF_STOCK`. Postgres row-locks the row and re-checks the WHERE against the latest
+  committed value, so check and change can't be split by another transaction.
+- `release` is a relative `available = available + :qty`, so no release is lost.
+- Flyway `V2__inventory_available_non_negative.sql`: `CHECK (available >= 0)` as a database safety net.
+- `Inventory.setAvailable` was removed, so stock can't be changed by read-modify-write in Java anymore.
+- Options compared (conditional UPDATE vs optimistic `@Version` vs `SELECT ... FOR UPDATE`):
+  `docs/decisions/001-stock-concurrency.md`.
 
-## Before / after
-| | Before | After |
+New tests in `InventoryConcurrencyIT`, all run against the naive code first (all 3 failed), then the fix:
+- `concurrentReleasesAreAllCounted`: stock 0, 50 concurrent releases of 1. Naive: final stock **10**
+  (40 lost). Fixed: 50.
+- `databaseRejectsNegativeStock`: setting -1 directly in SQL is rejected by `ck_inventory_available`.
+
+## Before / after (same machine as above, measured 2026-11-23)
+| | Before (3 runs) | After (3 runs) |
 |---|---|---|
-| Successful reservations (50 stock, 200 buyers) | 200, 200, 200 | (step 1.6) |
-| Final stock | 20, 13, 20 | (step 1.6) |
+| Successful reservations (50 stock, 200 buyers) | 200, 200, 200 | 50, 50, 50 |
+| 409 OUT_OF_STOCK | 0, 0, 0 | 150, 150, 150 |
+| Final stock | 20, 13, 20 | 0, 0, 0 |
+| Units oversold | 150, 150, 150 | 0, 0, 0 |
+| 50 concurrent releases, final stock (expected 50) | 10 (1 run) | 50, 50, 50 |
+
+## Lessons
+- Never do check-then-act on shared state in application code. Let the database do both in one statement.
+- Pick the safe pattern before load arrives. This bug doesn't show up in sequential tests (CatalogFlowIT passed).
+- Keep a constraint in the database as the last line of defence.

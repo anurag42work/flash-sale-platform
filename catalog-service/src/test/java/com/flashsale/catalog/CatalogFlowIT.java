@@ -20,7 +20,7 @@ import org.springframework.http.ResponseEntity;
 
 /**
  * Products and inventory over HTTP against a real Postgres. Reserve/release are called one after another here;
- * concurrent calls (and the overselling bug) are step 1.5.
+ * concurrent calls (incident 001, overselling) are in inventory.InventoryConcurrencyIT.
  */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)

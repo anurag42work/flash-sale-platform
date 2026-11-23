@@ -5,60 +5,73 @@ import com.flashsale.catalog.inventory.InventoryDtos.StockResponse;
 import com.flashsale.catalog.product.Product;
 import com.flashsale.catalog.product.ProductNotFoundException;
 import com.flashsale.catalog.product.ProductRepository;
+import java.sql.Timestamp;
 import java.time.Clock;
-import java.time.Instant;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Stock reservation.
+ * Stock reservation (incident 001 fix).
  *
- * <p>WARNING: NAIVE ON PURPOSE (incident 001, steps 1.5/1.6). Each method reads the row, checks and changes the
- * number in Java, then writes the new absolute value back, with no lock. Two concurrent requests can both read
- * available = 1, both pass the check and both write 0: two units sold, one taken from stock (lost update,
- * overselling). Do not copy this pattern; the fix is an atomic conditional UPDATE.
+ * <p>Check and change happen in ONE SQL statement, so the database does them atomically:
+ * {@code UPDATE ... SET available = available - :qty WHERE ... AND available >= :qty}. Postgres locks the row
+ * for the UPDATE and evaluates the WHERE against the latest committed value, so a concurrent buyer either sees
+ * enough stock and decrements it, or matches 0 rows and gets 409. Never read the stock, change it in Java and
+ * write it back: that was the lost-update bug (see docs/incidents/001-overselling.md).
  */
 @Service
 public class InventoryService {
 
-    private final InventoryRepository inventory;
+    private final JdbcClient jdbc;
     private final ProductRepository products;
     private final Clock clock;
 
-    public InventoryService(InventoryRepository inventory, ProductRepository products, Clock clock) {
-        this.inventory = inventory;
+    public InventoryService(JdbcClient jdbc, ProductRepository products, Clock clock) {
+        this.jdbc = jdbc;
         this.products = products;
         this.clock = clock;
     }
 
     @Transactional
     public ReservationResponse reserve(long productId, int quantity) {
+        // Read first only for the 404 and the price snapshot; the stock decision is made by the UPDATE below.
         Product product = products.findByIdAndActiveTrue(productId)
                 .orElseThrow(() -> new ProductNotFoundException(productId));
-        Inventory stock = load(productId);
 
-        // read ... check ... write: the race window is between these lines.
-        int available = stock.getAvailable();
-        if (available < quantity) {
-            throw new OutOfStockException(productId);
-        }
-        stock.setAvailable(available - quantity, now());
+        Integer remaining = jdbc.sql("""
+                        UPDATE inventory
+                           SET available = available - :qty, updated_at = :now
+                         WHERE product_id = :id AND available >= :qty
+                        RETURNING available""")
+                .param("qty", quantity)
+                .param("now", now())
+                .param("id", productId)
+                .query(Integer.class)
+                .optional()
+                .orElseThrow(() -> new OutOfStockException(productId)); // 0 rows: not enough stock
 
-        return new ReservationResponse(productId, quantity, product.getPrice(), available - quantity);
+        return new ReservationResponse(productId, quantity, product.getPrice(), remaining);
     }
 
     @Transactional
     public StockResponse release(long productId, int quantity) {
-        Inventory stock = load(productId);
-        stock.setAvailable(stock.getAvailable() + quantity, now()); // same lost-update problem as reserve
-        return new StockResponse(productId, stock.getAvailable());
+        // Relative increment: concurrent releases each add their quantity, none is lost.
+        Integer available = jdbc.sql("""
+                        UPDATE inventory
+                           SET available = available + :qty, updated_at = :now
+                         WHERE product_id = :id
+                        RETURNING available""")
+                .param("qty", quantity)
+                .param("now", now())
+                .param("id", productId)
+                .query(Integer.class)
+                .optional()
+                .orElseThrow(() -> new ProductNotFoundException(productId));
+        return new StockResponse(productId, available);
     }
 
-    private Inventory load(long productId) {
-        return inventory.findById(productId).orElseThrow(() -> new ProductNotFoundException(productId));
-    }
-
-    private Instant now() {
-        return clock.instant();
+    private Timestamp now() {
+        return Timestamp.from(clock.instant());
     }
 }
