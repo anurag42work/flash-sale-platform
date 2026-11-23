@@ -17,6 +17,12 @@ spring:
       # Flyway owns the schema. Hibernate only checks that entities match it.
       ddl-auto: validate
 
+idempotency:
+  # Keys (and stored responses) are kept this long; a retry within it gets the same order back.
+  ttl: ${IDEMPOTENCY_TTL:24h}
+  # Every hour at minute 15.
+  cleanup-cron: "${IDEMPOTENCY_CLEANUP_CRON:0 15 * * * *}"
+
 catalog:
   # localhost for run-local.sh, the container name on the VM.
   base-url: ${CATALOG_URL:http://localhost:8082}

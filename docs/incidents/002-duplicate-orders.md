@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Reproduced (step 1.7, commit 1). Fix: step 1.7, commit 2 |
+| Status | Fixed (step 1.7) |
 | Service | order-service, `POST /api/orders` |
 | Branch | `incident/002-duplicate-orders` |
 | Test | `order-service/src/test/java/com/flashsale/order/IdempotencyIT.java` |
@@ -41,6 +41,53 @@ order with a new UUID. Nothing records that this request was already handled, so
 recognise the retry. HTTP retries are normal (clients, load balancers, and the gateway's future retry
 policy all do them), so a non-idempotent create endpoint will create duplicates in production.
 
-## Fix
-To be added in commit 2: an `Idempotency-Key` header (required), an `idempotency_keys` table with
-`PRIMARY KEY (user_id, idem_key)`, and stored responses replayed on retry.
+## Fix (step 1.7, commit 2)
+- **`Idempotency-Key` header required** on `POST /api/orders`: 1–64 characters of `[A-Za-z0-9_-]`
+  (a UUID fits). Missing or malformed → 400 ProblemDetail.
+- **`idempotency_keys` table** (Flyway `order-service` V2): `PRIMARY KEY (user_id, idem_key)`, request hash,
+  status `IN_PROGRESS|COMPLETED`, stored response status + body (jsonb), `created_at` index for cleanup.
+- **`IdempotencyService`** wraps `OrderService.create` (unchanged):
+  1. Claim with `INSERT ... ON CONFLICT DO NOTHING`. The primary key lets exactly one request win, even
+     under concurrency. The claim commits right away, so concurrent requests see it.
+  2. Winner runs the order and stores the 201 response as COMPLETED.
+  3. Everyone else: different request hash → **422** `IDEMPOTENCY_KEY_REUSED`. Still IN_PROGRESS →
+     **409** `IDEMPOTENCY_KEY_IN_PROGRESS`. COMPLETED → the stored **201 + same body + same Location**,
+     with the header `Idempotent-Replayed: true`.
+  4. If the order fails (out of stock, catalog down), the key is **deleted**, so a retry with the same key
+     can succeed. That's safe because the failed order already released its stock.
+- **Request hash:** SHA-256 of the parsed request turned back into JSON, so whitespace or field order in
+  the raw body doesn't matter.
+- **Options compared** (Postgres vs Redis, claim, failure policy, transactions, scope, hash): `docs/decisions/002-idempotency.md`.
+- **Cleanup:** `IdempotencyCleanup` (`@Scheduled`, hourly at :15) deletes keys older than `idempotency.ttl`
+  (24h). It also clears keys stuck IN_PROGRESS after a crash.
+
+## Before / after (same machine as above, measured 2026-11-23)
+| | Before (3 runs) | After (3 runs) |
+|---|---|---|
+| 2 POSTs, same key: orders created | 2, 2, 2 | 1, 1, 1 |
+| 2 POSTs, same key: stock left (start 10, qty 2) | 6, 6, 6 | 8, 8, 8 |
+| Retry returns the same order id | no, no, no | yes, yes, yes |
+| 20 concurrent POSTs, same key: orders created | not run before the fix | 1, 1, 1 |
+| 20 concurrent POSTs: stock left (start 100, qty 1) | not run before the fix | 99, 99, 99 |
+| 20 concurrent POSTs: 201 / 409 split | not run before the fix | 1/19, 18/2, 4/16 |
+
+The 201/409 split varies between runs, and that's expected. Requests that arrive while the winner is still
+running get 409 (retry later); requests that arrive after it finished get the stored 201 back. What
+matters doesn't vary: exactly 1 order and stock reserved once.
+
+Other tests in `IdempotencyIT`: same key + other body → 422; a request during an in-flight one → 409; a
+failed order frees the key so a retry succeeds; keys are per user; missing key → 400 with nothing created;
+cleanup deletes only expired keys.
+
+## Known limits (not fixed here)
+- **Crash between claim and complete:** the key stays IN_PROGRESS, so retries get 409 until cleanup
+  (≤ 24h + 1h). A shorter expiry for IN_PROGRESS rows could come later.
+- **Order saved but storing the response fails:** same as above (409 until cleanup), but no duplicate is created.
+- **Catalog timeout after it actually reserved:** the key is deleted and the stock stays reserved. This is the
+  dual-write gap; it's fixed by the outbox/saga on Day 2.
+- **Retry after the TTL** creates a new order. 24h is far longer than any client retry window.
+
+## Lessons
+- Any non-idempotent endpoint that clients can retry will create duplicates. Retries are normal, not an edge case.
+- Let a unique constraint decide the race (here `PRIMARY KEY (user_id, idem_key)`), not a check in Java.
+- Store the response, not just "seen this key", so a retry gets exactly what the first call would have returned.
