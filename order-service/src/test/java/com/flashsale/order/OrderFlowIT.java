@@ -143,8 +143,10 @@ class OrderFlowIT {
 
     @SafeVarargs
     private ResponseEntity<Map<String, Object>> createOrder(UUID user, Map<String, Object>... lines) {
+        HttpHeaders headers = userHeaders(user);
+        headers.set("Idempotency-Key", UUID.randomUUID().toString()); // a new purchase each time
         return rest.exchange("/api/orders", HttpMethod.POST,
-                new HttpEntity<>(Map.of("items", List.of(lines)), userHeaders(user)), JSON);
+                new HttpEntity<>(Map.of("items", List.of(lines)), headers), JSON);
     }
 
     private ResponseEntity<Map<String, Object>> get(String path, UUID user) {

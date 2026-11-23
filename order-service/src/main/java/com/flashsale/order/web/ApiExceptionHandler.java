@@ -3,6 +3,9 @@ package com.flashsale.order.web;
 import com.flashsale.order.catalog.CatalogUnavailableException;
 import com.flashsale.order.catalog.OutOfStockException;
 import com.flashsale.order.catalog.UnknownProductException;
+import com.flashsale.order.idempotency.IdempotencyKeyInProgressException;
+import com.flashsale.order.idempotency.IdempotencyKeyReusedException;
+import com.flashsale.order.idempotency.InvalidIdempotencyKeyException;
 import com.flashsale.order.order.OrderNotFoundException;
 import java.util.Map;
 import java.util.TreeMap;
@@ -59,6 +62,26 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     ProblemDetail unknownProduct(UnknownProductException ex) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
         problem.setProperty("productId", ex.getProductId());
+        return problem;
+    }
+
+    @ExceptionHandler(InvalidIdempotencyKeyException.class)
+    ProblemDetail invalidIdempotencyKey(InvalidIdempotencyKeyException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
+
+    /** 409 with a code, so a client can tell "retry later" apart from OUT_OF_STOCK. */
+    @ExceptionHandler(IdempotencyKeyInProgressException.class)
+    ProblemDetail idempotencyKeyInProgress(IdempotencyKeyInProgressException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setProperty("code", "IDEMPOTENCY_KEY_IN_PROGRESS");
+        return problem;
+    }
+
+    @ExceptionHandler(IdempotencyKeyReusedException.class)
+    ProblemDetail idempotencyKeyReused(IdempotencyKeyReusedException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+        problem.setProperty("code", "IDEMPOTENCY_KEY_REUSED");
         return problem;
     }
 

@@ -30,12 +30,12 @@ class OrderApplicationIT {
     }
 
     @Test
-    void flywayCreatedTheV1Schema() {
+    void flywayCreatedTheSchema() {
         List<String> tables = jdbc.queryForList(
                 "SELECT table_name FROM information_schema.tables "
                         + "WHERE table_schema = 'public' AND table_name <> 'flyway_schema_history'",
                 String.class);
 
-        assertThat(tables).containsExactlyInAnyOrder("orders", "order_items");
+        assertThat(tables).containsExactlyInAnyOrder("orders", "order_items", "idempotency_keys");
     }
 }
