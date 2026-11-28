@@ -41,7 +41,7 @@ class OrderController {
 
     /**
      * Idempotent create (incident 002): a retry with the same Idempotency-Key returns the first response
-     * instead of creating a second order.
+     * instead of creating a second order. 202 Accepted: the order is PENDING until payment (async) decides.
      */
     @PostMapping
     ResponseEntity<OrderResponse> create(
@@ -52,7 +52,7 @@ class OrderController {
         String key = IdempotencyService.requireKey(idempotencyKey);
 
         Result<OrderResponse> result = idempotency.execute(user, key, request, OrderResponse.class,
-                HttpStatus.CREATED.value(), () -> orders.create(user, request));
+                HttpStatus.ACCEPTED.value(), () -> orders.create(user, request));
 
         OrderResponse created = result.body();
         ResponseEntity.BodyBuilder response = ResponseEntity.status(result.status())

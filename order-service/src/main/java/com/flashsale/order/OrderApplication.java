@@ -9,7 +9,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
 @ConfigurationPropertiesScan
-@EnableScheduling // idempotency key cleanup
+@EnableScheduling // idempotency key cleanup, outbox relay
 public class OrderApplication {
 
     public static void main(String[] args) {

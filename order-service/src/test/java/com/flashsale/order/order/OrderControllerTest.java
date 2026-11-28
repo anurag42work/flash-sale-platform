@@ -77,13 +77,13 @@ class OrderControllerTest {
     }
 
     @Test
-    void createReturns201WithLocation() throws Exception {
+    void createReturns202WithLocation() throws Exception {
         UUID id = UUID.randomUUID();
         given(orders.create(eq(USER), any())).willReturn(new OrderResponse(id, OrderStatus.PENDING,
                 new BigDecimal("20.00"), Instant.now(), List.of()));
 
         mvc.perform(asUser(post("/api/orders")).header("Idempotency-Key", KEY).content(ONE_ITEM))
-                .andExpect(status().isCreated())
+                .andExpect(status().isAccepted())
                 .andExpect(header().string("Location", "/api/orders/" + id))
                 .andExpect(jsonPath("$.status").value("PENDING"));
     }
@@ -111,11 +111,11 @@ class OrderControllerTest {
     void replayedResponseIsMarked() throws Exception {
         OrderResponse stored = new OrderResponse(UUID.randomUUID(), OrderStatus.PENDING, new BigDecimal("20.00"),
                 Instant.now(), List.of());
-        willReturn(new Result<>(201, stored, true)).given(idempotency)
+        willReturn(new Result<>(202, stored, true)).given(idempotency)
                 .execute(any(), any(), any(), any(), anyInt(), any());
 
         mvc.perform(asUser(post("/api/orders")).header("Idempotency-Key", KEY).content(ONE_ITEM))
-                .andExpect(status().isCreated())
+                .andExpect(status().isAccepted())
                 .andExpect(header().string("Idempotent-Replayed", "true"))
                 .andExpect(jsonPath("$.id").value(stored.id().toString()));
         verifyNoInteractions(orders);

@@ -55,7 +55,7 @@ class OrderFlowIT {
 
         ResponseEntity<Map<String, Object>> response = createOrder(user, line(1, 2), line(2, 4));
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
         Map<String, Object> order = response.getBody();
         assertThat(order).containsEntry("status", "PENDING").containsEntry("totalAmount", 30.00);
         assertThat(response.getHeaders().getLocation()).hasToString("/api/orders/" + order.get("id"));

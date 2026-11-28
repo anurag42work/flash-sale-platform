@@ -25,6 +25,7 @@ Stack: Java 21, Spring Boot 3.5, Spring Cloud 2025.0, PostgreSQL 16 + Flyway, Re
 |---|---|---|---|---|
 | 001 | Overselling under concurrent reservations | 200 buyers, 50 in stock → 200 sold | Atomic conditional `UPDATE ... WHERE available >= :qty`, `CHECK (available >= 0)` | [incident](docs/incidents/001-overselling.md), [decision](docs/decisions/001-stock-concurrency.md) |
 | 002 | Duplicate orders on client retry | Same request twice → 2 orders, stock taken twice | Required `Idempotency-Key`, stored response replayed | [incident](docs/incidents/002-duplicate-orders.md), [decision](docs/decisions/002-idempotency.md) |
+| 003 | Dual write: order saved, event lost | Kafka send fails after the DB commit → order PENDING, 0 events | Transactional outbox: order + event row in one transaction, `SKIP LOCKED` relay publishes (Kafka paused → all 5 events delivered 690 ms after unpause) | [incident](docs/incidents/003-dual-write.md), [decision](docs/decisions/003-dual-write.md) |
 
 ## Run locally
 
@@ -77,7 +78,7 @@ curl -s localhost:8080/api/products/42                                        # 
 KEY=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || powershell -c "[guid]::NewGuid()")
 curl -si -X POST localhost:8080/api/orders -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: $KEY" \
-  -d '{"items":[{"productId":42,"quantity":3},{"productId":43,"quantity":1}]}'   # 201, PENDING
+  -d '{"items":[{"productId":42,"quantity":3},{"productId":43,"quantity":1}]}'   # 202 Accepted, PENDING (publishes OrderCreated to Kafka)
 # Send the same command again: same order id, header "Idempotent-Replayed: true", stock not taken twice.
 
 curl -s localhost:8080/api/orders -H "Authorization: Bearer $TOKEN"           # own orders, newest first
@@ -129,7 +130,7 @@ Paths with traversal tricks (`..`, `%2e`, `%2f`, `;`) are rejected with 400.
 
 | Endpoint | Result |
 |---|---|
-| `POST /api/orders` | **`Idempotency-Key` required** (1–64 of `A-Z a-z 0-9 - _`). 201 PENDING order with price snapshot. Retry with the same key → same 201 + `Idempotent-Replayed: true`. 400 missing key, 409 `OUT_OF_STOCK`, 409 `IDEMPOTENCY_KEY_IN_PROGRESS`, 422 unknown product, 422 `IDEMPOTENCY_KEY_REUSED` (same key, other body), 503 catalog down or slow |
+| `POST /api/orders` | **`Idempotency-Key` required** (1–64 of `A-Z a-z 0-9 - _`). 202 Accepted: PENDING order with price snapshot (an `OrderCreated` event goes to Kafka topic `order.created`). Retry with the same key → same 202 + `Idempotent-Replayed: true`. 400 missing key, 409 `OUT_OF_STOCK`, 409 `IDEMPOTENCY_KEY_IN_PROGRESS`, 422 unknown product, 422 `IDEMPOTENCY_KEY_REUSED` (same key, other body), 503 catalog down or slow |
 | `GET /api/orders/{id}` | own order only (someone else's → 404) |
 | `GET /api/orders` | own orders, newest first, paged |
 

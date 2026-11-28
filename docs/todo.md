@@ -5,9 +5,13 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
 
 ## High
 
-- [ ] **Dual write: reserved stock can leak.** If the order save fails, catalog times out *after* reserving,
-  or order-service crashes between reserve and save, the stock stays reserved with no order.
-  → Day 2, steps 2.1–2.3 (incident 003: outbox + saga). Reconciliation job: 2.6.
+- [ ] **Reserved stock can still leak.** Incident 003 (step 2.2) fixed the lost event, and a failed order
+  transaction now releases its reservations. Still open: catalog times out *after* reserving, or order-service
+  crashes between reserve and commit, so the stock stays reserved with no order.
+  → Saga (2.3), reconciliation job (2.6).
+- [ ] **Outbox head-of-line blocking.** The relay stops at the first failed row (to keep order). A row that can
+  never be published (e.g. payload over `max.request.size`) blocks all later events. Add max attempts + a
+  "parked" state, an alert on `attempts`, or skip rows of other aggregates. → Step 2.4 (poison messages) or 2.6.
 - [ ] **No rate limit on login/register** (brute force, credential stuffing, sign-up spam).
   → Step 2.7 (Redis rate limiting in the gateway).
 - [ ] **On the VM, only the gateway may be reachable.** catalog and order trust `X-User-Id` / `X-User-Roles`,
@@ -27,8 +31,10 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
 
 ## Low
 
+- [ ] **Sent outbox rows are never deleted** (source: step 2.2). Add a daily `DELETE FROM outbox WHERE sent_at < now() - 7 days`
+  like the idempotency cleanup. → Day 4 tuning (or with 2.6).
 - [ ] **Order total can overflow `numeric(12,2)`**: price allows 10 integer digits, × quantity 100 × 50 lines.
-  The save fails with a 500 *after* stock was reserved (then it's the dual-write leak above).
+  The save fails with a 500 *after* stock was reserved (since 2.2 the reservations are released, but the user gets a 500).
   Fix: cap the order total (or the price) and reject with 422 before reserving.
 - [ ] **Expired/revoked refresh tokens are never deleted.** Add a scheduled cleanup (like the idempotency one)
   and an index on `expires_at`.
