@@ -25,9 +25,8 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
   → Step 2.5 (Resilience4j, incident 005).
 - [ ] **VM must not run with the `dev` profile** (it seeds 10k products). run-local.sh defaults to `dev`.
   → Step 2.8 (compose sets the profile explicitly).
-- [ ] **`Order` has no `@Version`.** Once the saga updates status from Kafka (2.3) and the reconciliation job
-  runs (2.6), two updates could overwrite each other. Add optimistic locking or conditional status updates
-  (`UPDATE ... WHERE status = 'PENDING'`). → Steps 2.3 / 2.6.
+- [ ] **Status changes must stay conditional.** Since 2.3b the saga moves orders with `UPDATE ... WHERE status = 'PENDING'`
+  (no `@Version` needed). The reconciliation job (2.6) must use the same rule, or it can overwrite a saga result.
 
 ## Low
 
