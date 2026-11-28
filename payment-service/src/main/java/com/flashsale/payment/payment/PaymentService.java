@@ -6,6 +6,7 @@ import com.flashsale.common.event.PaymentCompleted;
 import com.flashsale.common.event.PaymentFailed;
 import com.flashsale.payment.outbox.OutboxWriter;
 import com.flashsale.payment.provider.MockPaymentProvider.ChargeResult;
+import java.math.BigDecimal;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +27,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class PaymentService {
 
+    /** failure_reason of a payment created by {@link #expireIfMissing}: the order waited too long, never charged. */
+    public static final String EXPIRED = "EXPIRED";
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
 
     private final JdbcClient jdbc;
@@ -44,6 +47,19 @@ public class PaymentService {
         OrderCreated order = event.data();
         if (alreadyProcessed(event.eventId())) {
             log.info("Duplicate event {} for order {} skipped", event.eventId(), order.orderId());
+            return;
+        }
+        if (paymentExists(order.orderId())) {
+            // Already decided: a payment from an earlier event, or EXPIRED by order-service's reconciliation job
+            // (the order was failed and its stock released). Charging now would bill a cancelled order.
+            log.info("Order {} already has a payment; event {} not charged", order.orderId(), event.eventId());
+            jdbc.sql("""
+                    INSERT INTO processed_events (event_id, event_type) VALUES (:id, :type)
+                    ON CONFLICT (event_id) DO NOTHING
+                    """)
+                    .param("id", event.eventId())
+                    .param("type", event.type())
+                    .update();
             return;
         }
 
@@ -88,6 +104,47 @@ public class PaymentService {
                         new PaymentFailed(order.orderId(), paymentId, result.failureReason()));
             }
         });
+    }
+
+    /**
+     * Called by order-service's reconciliation job for an order that has been PENDING too long. Returns the order's
+     * payment; if there is none yet, records one as FAILED / EXPIRED first, so a late OrderCreated can never charge
+     * it. Idempotent and race-safe: UNIQUE (order_id) decides between this insert and PaymentService.handle.
+     *
+     * <p>Remaining race: a charge that is in flight at the provider right now (it is written only after the provider
+     * answers) loses its insert to this one; the customer is then charged for a failed order (docs/todo.md).
+     */
+    public PaymentStatus expireIfMissing(UUID orderId, BigDecimal amount) {
+        return tx.execute(status -> {
+            int inserted = jdbc.sql("""
+                    INSERT INTO payments (id, order_id, amount, status, failure_reason)
+                    VALUES (:id, :orderId, :amount, 'FAILED', :reason)
+                    ON CONFLICT (order_id) DO NOTHING
+                    """)
+                    .param("id", UUID.randomUUID())
+                    .param("orderId", orderId)
+                    .param("amount", amount)
+                    .param("reason", EXPIRED)
+                    .update();
+            if (inserted == 1) {
+                log.warn("Order {} had no payment after the reconciliation deadline: recorded as {}", orderId, EXPIRED);
+            }
+            return jdbc.sql("SELECT status, failure_reason FROM payments WHERE order_id = :orderId")
+                    .param("orderId", orderId)
+                    .query((rs, n) -> new PaymentStatus(orderId, rs.getString("status"), rs.getString("failure_reason")))
+                    .single();
+        });
+    }
+
+    /** @param reason null for COMPLETED */
+    public record PaymentStatus(UUID orderId, String status, String reason) {
+    }
+
+    private boolean paymentExists(UUID orderId) {
+        return jdbc.sql("SELECT EXISTS (SELECT 1 FROM payments WHERE order_id = :orderId)")
+                .param("orderId", orderId)
+                .query(Boolean.class)
+                .single();
     }
 
     private boolean alreadyProcessed(UUID eventId) {

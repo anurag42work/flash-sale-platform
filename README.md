@@ -13,7 +13,7 @@ Work in progress. Design: [docs/design.md](docs/design.md). Open items: [docs/to
 | gateway-service | 8080 | none | Single entry point: JWT check (JWKS), routing, identity headers, correlation id |
 | auth-service | 8081 | auth_db | Register/login, RS256 access tokens, rotating refresh tokens, JWKS |
 | catalog-service | 8082 | catalog_db | Products and stock (atomic reservation); releases stock on `order.failed` |
-| order-service | 8083 | order_db | Orders, Idempotency-Key, reserves stock at catalog, outbox, order side of the payment saga |
+| order-service | 8083 | order_db | Orders, Idempotency-Key, reserves stock at catalog, outbox, order side of the payment saga, stuck-order reconciliation job |
 | payment-service | 8084 | payment_db | Consumes `order.created`, charges a mock provider (latency, decline and error rate set by env) through Resilience4j, publishes the result via its outbox |
 | common-lib | none | none | Shared header names, the page response, event records and the event envelope |
 
@@ -163,6 +163,15 @@ Paths with traversal tricks (`..`, `%2e`, `%2f`, `;`) are rejected with 400.
 | `POST /api/orders` | **`Idempotency-Key` required** (1–64 of `A-Z a-z 0-9 - _`). 202 Accepted: PENDING order with price snapshot (an `OrderCreated` event goes to Kafka topic `order.created`). Retry with the same key → same 202 + `Idempotent-Replayed: true`. 400 missing key, 409 `OUT_OF_STOCK`, 409 `IDEMPOTENCY_KEY_IN_PROGRESS`, 422 unknown product, 422 `IDEMPOTENCY_KEY_REUSED` (same key, other body), 503 catalog down or slow |
 | `GET /api/orders/{id}` | own order only (someone else's → 404). `status`: PENDING, then CONFIRMED or FAILED once payment (async) has decided |
 | `GET /api/orders` | own orders, newest first, paged |
+
+Background job: every 60 s, orders PENDING for more than 10 min (`RECONCILIATION_STUCK_AFTER`) are settled with
+payment-service's answer. One instance at a time (lease lock in `job_locks`).
+
+### payment-service
+
+| Endpoint | Result |
+|---|---|
+| `POST /internal/payments/{orderId}/expire` | service-to-service, body `{"amount": 20.00}`. Returns the order's payment (`status`, `reason`); if there is none, records `FAILED` / `EXPIRED` first, so the order can't be charged later. Safe to repeat. 400 ProblemDetail for a bad amount or id |
 
 ## Test
 

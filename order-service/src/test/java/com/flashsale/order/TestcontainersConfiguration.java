@@ -12,14 +12,14 @@ import org.testcontainers.kafka.KafkaContainer;
  * testcontainers.reuse.enable=true (see README); otherwise a fresh one is started.
  */
 @TestConfiguration(proxyBeanMethods = false)
-class TestcontainersConfiguration {
+public class TestcontainersConfiguration {
 
     /**
      * One Kafka per test JVM, shared by every Spring test context (each IT class with its own properties gets its
      * own context; a broker per context would not fit in the laptop's 3 GB Docker limit). start() is a no-op once
      * the container is running.
      */
-    static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:3.9.1")
+    public static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:3.9.1")
             .withEnv("KAFKA_HEAP_OPTS", "-Xmx256m -Xms256m");
 
     @Bean

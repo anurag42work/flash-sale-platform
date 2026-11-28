@@ -51,8 +51,9 @@ product row that is read and cached.
 | idempotency_keys | `PRIMARY KEY (user_id uuid, idem_key varchar(64))`, `request_hash char(64) NOT NULL`, `status varchar(16) NOT NULL CHECK (status IN ('IN_PROGRESS','COMPLETED'))`, `response_status int NULL`, `response_body jsonb NULL`, `created_at`, `updated_at`, `CHECK (status = 'IN_PROGRESS' OR response_status IS NOT NULL)` | (created_at) for TTL cleanup | V2 (step 1.7) |
 | outbox | `id uuid PK` (= eventId), `aggregate_id uuid NOT NULL`, `topic varchar(255) NOT NULL` (added in 2.2), `event_type varchar(64) NOT NULL`, `payload jsonb NOT NULL`, `created_at`, `sent_at timestamptz NULL`, `attempts int NOT NULL DEFAULT 0 CHECK (attempts >= 0)`, `last_error text NULL` | partial `(created_at) WHERE sent_at IS NULL` | Day 2 (step 2.2, V3) |
 | processed_events | `event_id uuid PK`, `event_type varchar(64) NOT NULL`, `processed_at` | PK | V4 (step 2.3) |
+| job_locks | `name varchar(64) PK`, `locked_until timestamptz NOT NULL`, `locked_by varchar(128) NOT NULL` (lease lock per scheduled job) | PK | V5 (step 2.6) |
 
-Planned Day 2 index: `orders (status, created_at)` for the stuck-order reconciliation job (step 2.6).
+Index for the stuck-order reconciliation job (step 2.6, V5): partial `orders (created_at) WHERE status = 'PENDING'` (only unsettled orders, so it stays small).
 
 ### payment_db
 
@@ -128,3 +129,6 @@ Micrometer Prometheus + tracing (Day 4).
 | 33 | Provider protection (incident 005) | Resilience4j (`resilience4j-spring-boot3` 2.2.0, Spring Cloud BOM): Retry > CircuitBreaker > TimeLimiter > ThreadPoolBulkhead, programmatic in `ResilientPaymentGateway` | `@CircuitBreaker`/`@Retry` annotations; Spring Cloud CircuitBreaker | Visible order, unit-testable without AOP vs more code. `docs/decisions/006-provider-resilience.md` |
 | 34 | Provider fallback | Payment FAILED `PROVIDER_UNAVAILABLE` → order FAILED → stock released | Pause the consumer while the circuit is open | Fast decision, stock back on sale vs customers lose orders during provider trouble; timeout ≠ not charged (reconciliation todo) |
 | 35 | Payment consumer | concurrency 3 (= partitions), `max-poll-records` 10 | 1 thread, 500 records | No head-of-line wait across partitions, worst poll ≪ `max.poll.interval.ms` vs more threads |
+| 36 | Stuck-order reconciliation (step 2.6) | `@Scheduled` job in order-service: PENDING > 10 min → `POST /internal/payments/{id}/expire` → confirm / fail via the saga's conditional transitions | Re-publish `OrderCreated`; read-only status endpoint | Settles every case and stops late charges vs one more internal endpoint. `docs/decisions/007-stuck-order-reconciliation.md` |
+| 37 | Job lock | Lease row in `job_locks` (`INSERT ... ON CONFLICT DO UPDATE ... WHERE locked_until < now()`), DB clock | ShedLock; advisory lock; SKIP LOCKED on orders | No library, no open transaction, self-healing vs our own code. Correctness comes from conditional updates, not the lock |
+| 38 | "No payment" for a stuck order | payment-service records FAILED `EXPIRED` (UNIQUE order_id) and skips charging orders that already have a payment row | Just fail the order | No charge for a cancelled order vs a remaining race for a charge in flight (todo: PROCESSING row) |

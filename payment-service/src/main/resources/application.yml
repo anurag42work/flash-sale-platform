@@ -10,6 +10,10 @@ spring:
     password: ${DB_PASSWORD}
     hikari:
       maximum-pool-size: ${DB_POOL_SIZE:10}
+  mvc:
+    # Spring's own errors (bad UUID in the path, unreadable JSON) as RFC 7807 ProblemDetail, like our 400s.
+    problemdetails:
+      enabled: true
   jpa:
     # Keep DB connections out of the view layer; transactions end in the service layer.
     open-in-view: false

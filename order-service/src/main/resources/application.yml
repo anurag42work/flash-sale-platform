@@ -60,6 +60,24 @@ outbox:
   # Above delivery.timeout.ms (10 s), so the producer gives up first and reports the real error.
   send-timeout: 15s
 
+payment:
+  # Only the reconciliation job calls it. localhost for run-local.sh, the container name on the VM.
+  base-url: ${PAYMENT_URL:http://localhost:8084}
+  connect-timeout: 1s
+  read-timeout: 2s
+
+reconciliation:
+  enabled: ${RECONCILIATION_ENABLED:true}
+  # How often to look for stuck orders (also the delay before the first run after startup).
+  interval: ${RECONCILIATION_INTERVAL:60s}
+  # A healthy order leaves PENDING within seconds (provider ~100 ms + outbox polls). 10 min means "really stuck"
+  # and leaves time to replay a DLT before the job gives up on the order.
+  stuck-after: ${RECONCILIATION_STUCK_AFTER:10m}
+  batch-size: ${RECONCILIATION_BATCH_SIZE:100}
+  # Longest run: 100 orders x (1 s connect + 2 s read) = 300 s. The lease is twice that, so a slow run doesn't
+  # lose the lock half-way (if it did, the conditional updates would still keep the result correct).
+  lock-lease: 10m
+
 catalog:
   # localhost for run-local.sh, the container name on the VM.
   base-url: ${CATALOG_URL:http://localhost:8082}
