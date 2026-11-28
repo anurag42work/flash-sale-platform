@@ -16,12 +16,29 @@ spring:
     hibernate:
       # Flyway owns the schema. Hibernate only checks that entities match it.
       ddl-auto: validate
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    # Key and value are Strings (Boot's default serializers); the value is the event as JSON.
+    producer:
+      properties:
+        # When Kafka is down, send() blocks the HTTP request thread waiting for metadata (default 60 s).
+        max.block.ms: 5000
+        # Give up on an unacknowledged send after 10 s instead of the default 2 min
+        # (must be >= linger.ms + request.timeout.ms).
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
 
 idempotency:
   # Keys (and stored responses) are kept this long; a retry within it gets the same order back.
   ttl: ${IDEMPOTENCY_TTL:24h}
   # Every hour at minute 15.
   cleanup-cron: "${IDEMPOTENCY_CLEANUP_CRON:0 15 * * * *}"
+
+order:
+  kafka:
+    # Topic order.created. One broker locally and on the VM, so 1 replica.
+    partitions: ${ORDER_TOPIC_PARTITIONS:3}
+    replicas: ${ORDER_TOPIC_REPLICAS:1}
 
 catalog:
   # localhost for run-local.sh, the container name on the VM.

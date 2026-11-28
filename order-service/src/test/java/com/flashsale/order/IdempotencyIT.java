@@ -100,7 +100,7 @@ class IdempotencyIT {
         ResponseEntity<Map<String, Object>> retry = post(user, key, order(1, 1));
 
         assertThat(first.getHeaders().containsKey("Idempotent-Replayed")).isFalse();
-        assertThat(retry.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(retry.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
         assertThat(retry.getHeaders().getFirst("Idempotent-Replayed")).isEqualTo("true");
         assertThat(retry.getHeaders().getLocation()).isEqualTo(first.getHeaders().getLocation());
         assertThat(retry.getBody()).isEqualTo(first.getBody());
@@ -117,17 +117,17 @@ class IdempotencyIT {
 
         List<Integer> statuses = responses.stream().map(r -> r.getStatusCode().value()).toList();
         Set<Object> ids = responses.stream()
-                .filter(r -> r.getStatusCode() == HttpStatus.CREATED)
+                .filter(r -> r.getStatusCode() == HttpStatus.ACCEPTED)
                 .map(r -> r.getBody().get("id"))
                 .collect(Collectors.toSet());
-        System.out.printf("%n=== INCIDENT 002: %d concurrent POSTs, same key -> 201=%d, 409=%d, orders=%d,"
-                + " stock=%d (start 100, qty 1) ===%n%n", calls, Collections.frequency(statuses, 201),
+        System.out.printf("%n=== INCIDENT 002: %d concurrent POSTs, same key -> 202=%d, 409=%d, orders=%d,"
+                + " stock=%d (start 100, qty 1) ===%n%n", calls, Collections.frequency(statuses, 202),
                 Collections.frequency(statuses, 409), ordersOf(user), CATALOG.stock(1));
 
         assertThat(ordersOf(user)).as("orders created").isEqualTo(1);
         assertThat(CATALOG.stock(1)).as("stock reserved once").isEqualTo(99);
-        assertThat(statuses).as("first wins (201), others replay (201) or wait (409)").containsOnly(201, 409);
-        assertThat(ids).as("every 201 carries the same order").hasSize(1);
+        assertThat(statuses).as("first wins (202), others replay (202) or wait (409)").containsOnly(202, 409);
+        assertThat(ids).as("every 202 carries the same order").hasSize(1);
     }
 
     @Test
@@ -144,7 +144,7 @@ class IdempotencyIT {
 
         assertThat(second.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(second.getBody()).containsEntry("code", "IDEMPOTENCY_KEY_IN_PROGRESS");
-        assertThat(first.get(10, TimeUnit.SECONDS).getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(first.get(10, TimeUnit.SECONDS).getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
         assertThat(ordersOf(user)).isEqualTo(1);
     }
 
@@ -175,7 +175,7 @@ class IdempotencyIT {
 
         assertThat(failed.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(failed.getBody()).containsEntry("code", "OUT_OF_STOCK");
-        assertThat(retry.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(retry.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
         assertThat(retry.getHeaders().containsKey("Idempotent-Replayed")).isFalse();
         assertThat(ordersOf(user)).isEqualTo(1);
     }
@@ -190,7 +190,7 @@ class IdempotencyIT {
         Object aliceOrder = post(alice, key, order(1, 1)).getBody().get("id");
         ResponseEntity<Map<String, Object>> bobResponse = post(bob, key, order(1, 1));
 
-        assertThat(bobResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(bobResponse.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
         assertThat(bobResponse.getBody().get("id")).as("Bob gets his own order, not Alice's").isNotEqualTo(aliceOrder);
         assertThat(ordersOf(alice)).isEqualTo(1);
         assertThat(ordersOf(bob)).isEqualTo(1);

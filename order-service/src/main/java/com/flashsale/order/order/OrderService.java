@@ -24,16 +24,19 @@ public class OrderService {
 
     private final OrderRepository orders;
     private final CatalogClient catalog;
+    private final OrderEventPublisher events;
     private final Clock clock;
 
-    public OrderService(OrderRepository orders, CatalogClient catalog, Clock clock) {
+    public OrderService(OrderRepository orders, CatalogClient catalog, OrderEventPublisher events, Clock clock) {
         this.orders = orders;
         this.catalog = catalog;
+        this.events = events;
         this.clock = clock;
     }
 
     /**
-     * Synchronous order creation: reserve every item at catalog, then save the order as PENDING.
+     * Order creation: reserve every item at catalog, save the order as PENDING, then publish OrderCreated.
+     * The caller gets 202 Accepted: payment happens later, driven by the event.
      *
      * <p>Not @Transactional on purpose: no DB connection is held while waiting for catalog over HTTP.
      * The final save runs in its own short transaction (the repository's).
@@ -54,7 +57,9 @@ public class OrderService {
 
         Order order = Order.pending(userId, clock.instant());
         reserved.forEach(r -> order.addItem(r.productId(), r.quantity(), r.unitPrice()));
-        return OrderResponse.from(orders.save(order));
+        Order saved = orders.save(order); // commits here (the repository's own transaction)
+        events.publishCreated(saved);   // second write, to Kafka, after the commit: incident 003
+        return OrderResponse.from(saved);
     }
 
     // readOnly transaction: the items are loaded lazily while mapping, which needs an open session.
