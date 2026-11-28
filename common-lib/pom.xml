@@ -14,4 +14,20 @@
     <name>common-lib</name>
     <description>Shared constants, event records and error model. Keep tiny.</description>
     <!-- Plain jar: no spring-boot-maven-plugin, so it is not repackaged as an executable jar. -->
+
+    <dependencies>
+        <!-- Optional: only for KafkaErrorHandling. Not passed on to users of common-lib; every service that
+             uses it already depends on spring-kafka itself. -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 </project>

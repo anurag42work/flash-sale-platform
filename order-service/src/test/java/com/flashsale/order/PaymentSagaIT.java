@@ -9,6 +9,7 @@ import com.flashsale.common.event.OrderFailed;
 import com.flashsale.common.event.PaymentCompleted;
 import com.flashsale.common.event.PaymentFailed;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -175,6 +176,35 @@ class PaymentSagaIT {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).containsEntry("status", "CONFIRMED");
+    }
+
+    @Test
+    void malformedPaymentEventIsParkedOnItsDltAndTheOrderIsUntouched() throws Exception {
+        UUID orderId = createOrder();
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, TestcontainersConfiguration.KAFKA.getBootstrapServers());
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "test-" + UUID.randomUUID());
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        props.put(ConsumerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG, "false");
+        try (KafkaConsumer<String, String> dlt = new KafkaConsumer<>(props, new StringDeserializer(),
+                new StringDeserializer())) {
+            dlt.subscribe(List.of(PaymentCompleted.TOPIC + ".DLT"));
+
+            kafka.send(PaymentCompleted.TOPIC, orderId.toString(), "{\"eventId\": 42").get(10, TimeUnit.SECONDS);
+
+            List<ConsumerRecord<String, String>> parked = new ArrayList<>();
+            awaitTrue(() -> {
+                dlt.poll(Duration.ofMillis(500)).forEach(r -> {
+                    if (orderId.toString().equals(r.key())) {
+                        parked.add(r);
+                    }
+                });
+                return !parked.isEmpty();
+            });
+            assertThat(new String(parked.get(0).headers().lastHeader("kafka_dlt-exception-cause-fqcn").value(),
+                    StandardCharsets.UTF_8)).startsWith("com.fasterxml.jackson"); // a parse error: not retried
+        }
+        assertThat(status(orderId)).isEqualTo("PENDING");
     }
 
     private UUID createOrder() {
