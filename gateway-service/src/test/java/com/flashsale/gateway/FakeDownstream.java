@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -20,6 +21,7 @@ final class FakeDownstream {
     private final HttpServer server;
     private final AtomicReference<Headers> lastRequest = new AtomicReference<>();
     private final AtomicReference<String> lastPath = new AtomicReference<>();
+    private final AtomicInteger requests = new AtomicInteger();
 
     FakeDownstream(RSAKey signingKey) {
         try {
@@ -30,6 +32,8 @@ final class FakeDownstream {
         String jwks = new JWKSet(signingKey.toPublicJWK()).toString();
         server.createContext("/.well-known/jwks.json", exchange -> respond(exchange, jwks));
         server.createContext("/", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            requests.incrementAndGet();
             lastRequest.set(exchange.getRequestHeaders());
             lastPath.set(exchange.getRequestURI().getRawPath());
             respond(exchange, "{\"downstream\":\"ok\"}");
@@ -51,9 +55,15 @@ final class FakeDownstream {
         return lastPath.get();
     }
 
+    /** How many routed requests reached the downstream service since the last reset. */
+    int requests() {
+        return requests.get();
+    }
+
     void reset() {
         lastRequest.set(null);
         lastPath.set(null);
+        requests.set(0);
     }
 
     private static void respond(HttpExchange exchange, String json) throws IOException {

@@ -13,9 +13,12 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
-/** Writes 401/403 from the security layer as RFC 7807 ProblemDetail, like the services do. */
+/**
+ * Writes errors produced by the gateway itself (401/403 from security, 429 from rate limiting) as RFC 7807
+ * ProblemDetail, like the services do.
+ */
 @Component
-class ProblemResponses {
+public class ProblemResponses {
 
     private final ObjectMapper objectMapper;
 
@@ -24,10 +27,14 @@ class ProblemResponses {
     }
 
     Mono<Void> write(ServerWebExchange exchange, HttpStatus status, String detail) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
-        problem.setInstance(URI.create(exchange.getRequest().getPath().value()));
+        return write(exchange.getRequest().getPath().value(), exchange.getResponse(), status, detail);
+    }
 
-        ServerHttpResponse response = exchange.getResponse();
+    /** @param path the request path, used as the problem's "instance" */
+    public Mono<Void> write(String path, ServerHttpResponse response, HttpStatus status, String detail) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
+        problem.setInstance(URI.create(path));
+
         response.setStatusCode(status);
         response.getHeaders().setContentType(MediaType.APPLICATION_PROBLEM_JSON);
         if (status == HttpStatus.UNAUTHORIZED) {

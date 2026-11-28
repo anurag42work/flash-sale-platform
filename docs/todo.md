@@ -21,12 +21,12 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
   never be published (e.g. payload over `max.request.size`) blocks all later events. Add max attempts + a
   "parked" state, an alert on `attempts`, or skip rows of other aggregates. Not covered by 2.4 (consumers) or 2.6
   (the job settles the stuck orders, but the relay stays blocked). → Day 4 (alert) / continuation plan.
-- [ ] **No rate limit on login/register** (brute force, credential stuffing, sign-up spam).
-  → Step 2.7 (Redis rate limiting in the gateway).
 - [ ] **On the VM, only the gateway may be reachable.** catalog and order trust `X-User-Id` / `X-User-Roles`,
   and `/internal/**` (catalog inventory, payment expire) has no auth. In compose: publish only the gateway port (and Grafana later),
   keep services on the internal network. Locally this is done (run-local.sh binds 127.0.0.1).
   → Step 2.8. Optional later: a shared secret or mTLS between services (defence in depth).
+- [ ] **Credential stuffing over many IPs** (source: step 2.7). The login limit is per IP (5/min), so a botnet stays under
+  it. Add a per-account limit (key = email from the body) and/or lockout with growing delays in auth-service. → Continuation plan.
 
 ## Medium
 
@@ -34,7 +34,8 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
   → Not covered by 2.5 (that was the payment provider). Planned: Spring Cloud CircuitBreaker + timeouts on gateway routes, before 2.8.
 - [ ] **VM must not run with the `dev` profile** (it seeds 10k products). run-local.sh defaults to `dev`.
   → Step 2.8 (compose sets the profile explicitly).
-
+- [ ] **Rate limiter running open unnoticed** (source: step 2.7). With Redis down, limits are off (fail open, by design).
+  Alert on Redis being unreachable / limiter errors. → Day 4 (step 4.1).
 - [ ] **No alert when messages land on a DLT** (source: step 2.4). Add a metric (DLT end offsets or a counter in
   the recoverer) and a Grafana alert. → Day 4 (step 4.1).
 

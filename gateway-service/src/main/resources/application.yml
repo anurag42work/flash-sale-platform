@@ -4,25 +4,84 @@ server:
 spring:
   application:
     name: gateway-service
+  data:
+    redis:
+      # Token buckets for rate limiting (step 2.7). Short timeouts: if Redis is down the limiter lets requests
+      # through (fail open), and each request should lose milliseconds, not seconds, finding that out.
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      connect-timeout: 500ms
+      timeout: 500ms
   cloud:
     gateway:
       server:
         webflux:
           # Downstream addresses come from env vars: localhost for run-local.sh, container names on the VM.
           # Which paths need a token is decided in SecurityConfig, not here.
+          #
+          # Rate limits (step 2.7): Spring Cloud Gateway's RequestRateLimiter = a token bucket per key in Redis.
+          #   replenishRate   tokens added per second (the sustained rate)
+          #   burstCapacity   bucket size (how many requests can come at once)
+          #   requestedTokens cost of one request (> 1 gives "N per minute" limits)
+          # Key (RateLimitKeyResolver): route + user id from the JWT, or route + client IP without one.
+          # The values are starting points (policy, not measurements); Day 4/5 load tests tune them.
+          # More specific routes come first: the first matching route wins.
           routes:
+            # Brute force / credential stuffing from one address: 5 attempts at once, then 1 every 12 s (5 per minute).
+            - id: auth-login
+              uri: ${AUTH_URL:http://localhost:8081}
+              predicates:
+                - Path=/api/auth/login
+                - Method=POST
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@rateLimitKeyResolver}"
+                    redis-rate-limiter.replenishRate: 1
+                    redis-rate-limiter.burstCapacity: 60
+                    redis-rate-limiter.requestedTokens: 12
             - id: auth
               uri: ${AUTH_URL:http://localhost:8081}
               predicates:
                 - Path=/api/auth/**
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@rateLimitKeyResolver}"
+                    redis-rate-limiter.replenishRate: 5
+                    redis-rate-limiter.burstCapacity: 10
             - id: catalog
               uri: ${CATALOG_URL:http://localhost:8082}
               predicates:
                 - Path=/api/products/**
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@rateLimitKeyResolver}"
+                    redis-rate-limiter.replenishRate: 20
+                    redis-rate-limiter.burstCapacity: 40
+            # Buying: a person clicking is fine, a bot hammering "buy" during the flash sale is not. Per user.
+            - id: order-create
+              uri: ${ORDER_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/orders
+                - Method=POST
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@rateLimitKeyResolver}"
+                    redis-rate-limiter.replenishRate: 2
+                    redis-rate-limiter.burstCapacity: 5
             - id: order
               uri: ${ORDER_URL:http://localhost:8083}
               predicates:
                 - Path=/api/orders/**
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@rateLimitKeyResolver}"
+                    redis-rate-limiter.replenishRate: 20
+                    redis-rate-limiter.burstCapacity: 40
   security:
     oauth2:
       resourceserver:
@@ -43,3 +102,8 @@ management:
     health:
       probes:
         enabled: true
+  health:
+    redis:
+      # Redis is optional for the gateway (rate limiting fails open). With the default Redis health check, a Redis
+      # outage would mark the gateway DOWN and an orchestrator would restart a perfectly working gateway.
+      enabled: false
