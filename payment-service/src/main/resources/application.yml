@@ -16,6 +16,43 @@ spring:
     hibernate:
       # Flyway owns the schema. Hibernate only checks that entities match it.
       ddl-auto: validate
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    # Key and value are Strings (Boot's default (de)serializers); the value is the event envelope as JSON.
+    consumer:
+      # All payment-service instances share this group: each order.created partition goes to one of them.
+      group-id: payment-service
+      # A new consumer group starts at the oldest event, so nothing published before the first start is skipped.
+      auto-offset-reset: earliest
+      # Offsets are committed by our code (ack after the DB commit), never on a timer.
+      enable-auto-commit: false
+    listener:
+      ack-mode: manual_immediate
+    producer:
+      # Same producer settings as order-service (docs/design.md decision 23).
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.block.ms: 5000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
+
+payment:
+  provider:
+    # Fake provider. Arbitrary demo defaults (not measurements): every charge waits this long ...
+    latency-ms: ${PAYMENT_PROVIDER_LATENCY_MS:100}
+    # ... and this share of charges is declined (0-100).
+    failure-rate-percent: ${PAYMENT_PROVIDER_FAILURE_RATE:10}
+  kafka:
+    # Topics payment.completed / payment.failed. One broker locally and on the VM, so 1 replica.
+    partitions: ${PAYMENT_TOPIC_PARTITIONS:3}
+    replicas: ${PAYMENT_TOPIC_REPLICAS:1}
+
+outbox:
+  poll-interval: ${OUTBOX_POLL_INTERVAL:500ms}
+  batch-size: ${OUTBOX_BATCH_SIZE:100}
+  # Above delivery.timeout.ms (10 s), so the producer gives up first and reports the real error.
+  send-timeout: 15s
 
 management:
   endpoints:
