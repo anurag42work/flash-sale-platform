@@ -9,6 +9,11 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
   transaction now releases its reservations. Still open: catalog times out *after* reserving, or order-service
   crashes between reserve and commit, so the stock stays reserved with no order.
   → Saga (2.3), reconciliation job (2.6).
+- [ ] **A Kafka message that always fails is skipped silently.** All consumers (payment, order, catalog) use Spring
+  Kafka's default error handler: about 10 quick retries, then a log line and the offset moves on. The event is lost.
+  → Step 2.4 (incident 004: retry with backoff + dead-letter topic).
+- [ ] **An order can stay PENDING forever** if its payment event never arrives (payment-service down for a long
+  time, skipped message). → Step 2.6 (stuck-order reconciliation).
 - [ ] **Outbox head-of-line blocking.** The relay stops at the first failed row (to keep order). A row that can
   never be published (e.g. payload over `max.request.size`) blocks all later events. Add max attempts + a
   "parked" state, an alert on `attempts`, or skip rows of other aggregates. → Step 2.4 (poison messages) or 2.6.

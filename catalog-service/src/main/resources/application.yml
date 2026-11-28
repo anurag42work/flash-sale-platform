@@ -16,6 +16,18 @@ spring:
     hibernate:
       # Flyway owns the schema. Hibernate only checks that entities match it.
       ddl-auto: validate
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    # Consumer only (order.failed); key and value are Strings, the value is the event envelope as JSON.
+    consumer:
+      # All catalog-service instances share this group: each order.failed partition goes to one of them.
+      group-id: catalog-service
+      # A new consumer group starts at the oldest event, so nothing published before the first start is skipped.
+      auto-offset-reset: earliest
+      # Offsets are committed by our code (ack after the DB commit), never on a timer.
+      enable-auto-commit: false
+    listener:
+      ack-mode: manual_immediate
 
 management:
   endpoints:
