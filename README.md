@@ -26,6 +26,7 @@ Stack: Java 21, Spring Boot 3.5, Spring Cloud 2025.0, PostgreSQL 16 + Flyway, Re
 | 001 | Overselling under concurrent reservations | 200 buyers, 50 in stock → 200 sold | Atomic conditional `UPDATE ... WHERE available >= :qty`, `CHECK (available >= 0)` | [incident](docs/incidents/001-overselling.md), [decision](docs/decisions/001-stock-concurrency.md) |
 | 002 | Duplicate orders on client retry | Same request twice → 2 orders, stock taken twice | Required `Idempotency-Key`, stored response replayed | [incident](docs/incidents/002-duplicate-orders.md), [decision](docs/decisions/002-idempotency.md) |
 | 003 | Dual write: order saved, event lost | Kafka send fails after the DB commit → order PENDING, 0 events | Transactional outbox: order + event row in one transaction, `SKIP LOCKED` relay publishes (Kafka paused → all 5 events delivered 690 ms after unpause) | [incident](docs/incidents/003-dual-write.md), [decision](docs/decisions/003-dual-write.md) |
+| 004 | Poison message / failing event dropped | Default handler: 10 instant attempts, then skipped. Bad JSON and an 8 s DB outage both lost, 0 on any DLT | Backoff (3 attempts) then `<topic>.DLT`; bad data straight to the DLT; `scripts/dlt.sh` lists and replays | [incident](docs/incidents/004-poison-message.md), [decision](docs/decisions/005-dead-letter-topics.md) |
 
 ## Order saga (Kafka, Day 2)
 
@@ -43,6 +44,17 @@ Every consumer is idempotent: the event id goes into `processed_events` in the s
 and the Kafka offset is acknowledged only after the commit (at-least-once delivery, each event applied once).
 Status changes only happen from PENDING. Details: [decision 003](docs/decisions/003-dual-write.md),
 [decision 004](docs/decisions/004-saga-stock-release.md).
+
+A message a consumer can't process is retried 3 times (1 s, then 2 s apart) and then parked on `<topic>.DLT`.
+Malformed or invalid messages go there at once. To inspect and replay (Git Bash, infra running):
+
+```bash
+scripts/dlt.sh topics                               # DLT topics and message counts
+scripts/dlt.sh list order.created.DLT               # partition, offset, key, value
+scripts/dlt.sh show order.created.DLT 0 5           # one message with its error headers
+scripts/dlt.sh replay order.created.DLT 0 5         # publish it again to order.created (after fixing the cause)
+scripts/dlt.sh replay-all order.created.DLT         # everything not replayed before
+```
 
 ## Run locally
 

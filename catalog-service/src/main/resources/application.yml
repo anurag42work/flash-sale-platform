@@ -28,6 +28,20 @@ spring:
       enable-auto-commit: false
     listener:
       ack-mode: manual_immediate
+    producer:
+      # Only used to publish failed records to order.failed.DLT (incident 004). Same settings as the other services.
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.block.ms: 5000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
+
+catalog:
+  kafka:
+    # Topic order.failed.DLT. One broker locally and on the VM, so 1 replica.
+    partitions: ${CATALOG_TOPIC_PARTITIONS:3}
+    replicas: ${CATALOG_TOPIC_REPLICAS:1}
 
 management:
   endpoints:

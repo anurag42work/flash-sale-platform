@@ -6,12 +6,19 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flashsale.catalog.TestcontainersConfiguration;
 import com.flashsale.common.event.EventEnvelope;
 import com.flashsale.common.event.OrderFailed;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -80,6 +87,40 @@ class StockReleaseIT {
         awaitTrue(() -> processed(event.eventId()));
 
         assertThat(available(a)).isEqualTo(5);
+    }
+
+    @Test
+    void invalidQuantityIsParkedOnTheDltAndNoStockChanges() throws Exception {
+        long a = product(3);
+        UUID orderId = UUID.randomUUID();
+        EventEnvelope<OrderFailed> event = new EventEnvelope<>(UUID.randomUUID(), OrderFailed.TYPE,
+                OrderFailed.VERSION, Instant.now(),
+                new OrderFailed(orderId, "PAYMENT_DECLINED", List.of(new OrderFailed.Item(a, -5))));
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, TestcontainersConfiguration.KAFKA.getBootstrapServers());
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "test-" + UUID.randomUUID());
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        props.put(ConsumerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG, "false");
+        try (KafkaConsumer<String, String> dlt = new KafkaConsumer<>(props, new StringDeserializer(),
+                new StringDeserializer())) {
+            dlt.subscribe(List.of(OrderFailed.TOPIC + ".DLT"));
+
+            publish(orderId, event);
+
+            List<ConsumerRecord<String, String>> parked = new ArrayList<>();
+            awaitTrue(() -> {
+                dlt.poll(Duration.ofMillis(500)).forEach(r -> {
+                    if (orderId.toString().equals(r.key())) {
+                        parked.add(r);
+                    }
+                });
+                return !parked.isEmpty();
+            });
+            assertThat(new String(parked.get(0).headers().lastHeader("kafka_dlt-exception-cause-fqcn").value(),
+                    StandardCharsets.UTF_8)).isEqualTo("com.flashsale.common.event.InvalidEventException");
+        }
+        assertThat(available(a)).as("a negative quantity must not remove stock").isEqualTo(3);
+        assertThat(processed(event.eventId())).isFalse();
     }
 
     private long product(int available) {

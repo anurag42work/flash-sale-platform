@@ -4,8 +4,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flashsale.common.event.EventEnvelope;
+import com.flashsale.common.event.InvalidEventException;
 import com.flashsale.common.event.PaymentCompleted;
 import com.flashsale.common.event.PaymentFailed;
+import java.util.UUID;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
@@ -14,7 +16,8 @@ import org.springframework.stereotype.Component;
 /**
  * Consumer group order-service (from spring.kafka.consumer.group-id) on payment.completed / payment.failed.
  * Acknowledged only after OrderSagaService committed (at-least-once; the service drops redeliveries).
- * Not acknowledged on an exception: Spring Kafka's default error handler retries, then logs and skips (DLQ: 2.4).
+ * On an exception the record is not acknowledged; the error handler (config/KafkaErrorConfig) retries with backoff
+ * and then parks it on payment.*.DLT. Malformed JSON and invalid events go to the DLT at once.
  */
 @Component
 class PaymentEventsListener {
@@ -34,13 +37,24 @@ class PaymentEventsListener {
 
     @KafkaListener(topics = PaymentCompleted.TOPIC)
     void onPaymentCompleted(ConsumerRecord<String, String> record, Acknowledgment ack) throws JsonProcessingException {
-        saga.onPaymentCompleted(json.readValue(record.value(), COMPLETED));
+        EventEnvelope<PaymentCompleted> event = json.readValue(record.value(), COMPLETED)
+                .requireValid(PaymentCompleted.TYPE);
+        requireOrderId(event.data().orderId());
+        saga.onPaymentCompleted(event);
         ack.acknowledge();
     }
 
     @KafkaListener(topics = PaymentFailed.TOPIC)
     void onPaymentFailed(ConsumerRecord<String, String> record, Acknowledgment ack) throws JsonProcessingException {
-        saga.onPaymentFailed(json.readValue(record.value(), FAILED));
+        EventEnvelope<PaymentFailed> event = json.readValue(record.value(), FAILED).requireValid(PaymentFailed.TYPE);
+        requireOrderId(event.data().orderId());
+        saga.onPaymentFailed(event);
         ack.acknowledge();
+    }
+
+    private static void requireOrderId(UUID orderId) {
+        if (orderId == null) {
+            throw new InvalidEventException("orderId is missing");
+        }
     }
 }

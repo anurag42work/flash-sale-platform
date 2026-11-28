@@ -9,14 +9,11 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
   transaction now releases its reservations. Still open: catalog times out *after* reserving, or order-service
   crashes between reserve and commit, so the stock stays reserved with no order.
   → Saga (2.3), reconciliation job (2.6).
-- [ ] **A Kafka message that always fails is skipped silently.** All consumers (payment, order, catalog) use Spring
-  Kafka's default error handler: about 10 quick retries, then a log line and the offset moves on. The event is lost.
-  → Step 2.4 (incident 004: retry with backoff + dead-letter topic).
 - [ ] **An order can stay PENDING forever** if its payment event never arrives (payment-service down for a long
-  time, skipped message). → Step 2.6 (stuck-order reconciliation).
+  time, or its event parked on a DLT and not replayed yet). → Step 2.6 (stuck-order reconciliation).
 - [ ] **Outbox head-of-line blocking.** The relay stops at the first failed row (to keep order). A row that can
   never be published (e.g. payload over `max.request.size`) blocks all later events. Add max attempts + a
-  "parked" state, an alert on `attempts`, or skip rows of other aggregates. → Step 2.4 (poison messages) or 2.6.
+  "parked" state, an alert on `attempts`, or skip rows of other aggregates. → Step 2.6 (not covered by 2.4, which handles consumers).
 - [ ] **No rate limit on login/register** (brute force, credential stuffing, sign-up spam).
   → Step 2.7 (Redis rate limiting in the gateway).
 - [ ] **On the VM, only the gateway may be reachable.** catalog and order trust `X-User-Id` / `X-User-Roles`,
@@ -32,6 +29,9 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
   → Step 2.8 (compose sets the profile explicitly).
 - [ ] **Status changes must stay conditional.** Since 2.3b the saga moves orders with `UPDATE ... WHERE status = 'PENDING'`
   (no `@Version` needed). The reconciliation job (2.6) must use the same rule, or it can overwrite a saga result.
+
+- [ ] **No alert when messages land on a DLT** (source: step 2.4). Add a metric (DLT end offsets or a counter in
+  the recoverer) and a Grafana alert. → Day 4 (step 4.1).
 
 ## Low
 

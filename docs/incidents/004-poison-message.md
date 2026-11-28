@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Reproduced (step 2.4, commit 1). Fix: backoff + dead-letter topics (step 2.4, commit 2) |
+| Status | Fixed (step 2.4): retry with backoff, then dead-letter topics; bad data straight to the DLT |
 | Services | every Kafka consumer: payment-service (`order.created`), order-service (`payment.*`), catalog-service (`order.failed`) |
 | Branch | `incident/004-poison-message` |
 | Test | `payment-service/src/test/java/com/flashsale/payment/PoisonMessageIT.java` |
@@ -62,12 +62,58 @@ so it isn't reported as a blocking time.)
 - There's **no dead-letter topic**, so a skipped record exists only as a log line. Nobody can inspect it or replay
   it after the cause is fixed.
 
-## Fix
-To be filled in by commit 2 (step 2.4): exponential backoff (3 attempts), then `DeadLetterPublishingRecoverer` to
-`<topic>.DLT`. Deserialization and validation errors are not retried. `scripts/dlt.sh` lists and replays.
+## Fix (step 2.4, commit 2)
+Options compared in `docs/decisions/005-dead-letter-topics.md`.
 
-## Before / after
-| | Before (default handler) | After |
+1. **One error policy for every consumer:** `common-lib/.../kafka/KafkaErrorHandling.deadLetterErrorHandler(...)`,
+   registered as the `CommonErrorHandler` bean in payment, order and catalog (`config/KafkaErrorConfig`). Spring
+   Boot plugs it into every `@KafkaListener`.
+2. **Backoff:** 3 attempts (at once, after 1 s, after 2 s more; this is configuration, not a measurement). The
+   partition waits during the retries, so events of one order stay in order.
+3. **Dead-letter topic:** after the last attempt, `DeadLetterPublishingRecoverer` publishes the record to
+   `<topic>.DLT` (same key and partition number, original value). Headers carry the error class, message and
+   stack trace, plus the original topic, partition and offset. Only then does the consumer move on.
+   The name is set explicitly. Spring Kafka 3.x's default would be `<topic>-dlt`, and that's how the first run of
+   the fix failed (it published to an undeclared topic).
+   DLT topics are declared by the consuming service with the same partition count: `order.created.DLT` (payment),
+   `payment.completed.DLT` / `payment.failed.DLT` (order), `order.failed.DLT` (catalog).
+4. **Bad data is never retried:** Jackson parse errors and the new `InvalidEventException` go to the DLT after
+   1 attempt. Every listener now validates what it relies on: `EventEnvelope.requireValid(type)` (eventId, type,
+   data), plus per event amount > 0 and items present (payment), orderId (order), and quantities > 0 (catalog;
+   a negative quantity would otherwise *remove* stock).
+5. **List and replay:** `scripts/dlt.sh topics | list | show | replay | replay-all` (Kafka CLI inside the broker
+   container). Replay re-publishes the value with its key to the original topic. Consumers dedupe by eventId, so
+   replaying twice is harmless. `replay-all` uses a consumer group, so it never re-sends what it already sent.
+
+**Test change in commit 2:** the commit-1 test checked `kafka_dlt-exception-fqcn` for "Json". That header holds
+Spring's wrapper (`ListenerExecutionFailedException`), and the real error is in `kafka_dlt-exception-cause-fqcn`.
+The assertion now reads the cause header. The behaviour it checks (a parse error, recorded on the DLT) is
+unchanged. A third test was added (valid JSON, invalid data).
+
+## Before / after (measured 2026-11-28, same machine, single runs)
+
+| Case | Before (default handler) | After |
 |---|---|---|
-| Malformed JSON | 10 attempts, dropped | to be measured |
-| Transient failure longer than the retries | 10 attempts, lost | to be measured |
+| Malformed JSON | 10 attempts, no pause, dropped (0 on DLT) | **1 attempt**, on `order.created.DLT` with the Jackson error as cause, next message on the partition processed |
+| Valid JSON, total 0 | (not tested before) | 1 attempt, on the DLT with `InvalidEventException: totalAmount must be > 0`, `PaymentService.handle` never called |
+| Valid event, 8 s DB outage | 10 attempts, all inside the outage, **lost** (no payment, 0 on DLT) | **3 attempts**, then on the DLT; replayed after the outage → payment created |
+| Mutation: bad JSON made retryable again | n/a | 3 attempts, test fails ("bad data is not retried"); the healthy message behind it was processed after 4270 ms vs 1088 ms in the normal run |
+| order-service, malformed `payment.completed` | n/a | on `payment.completed.DLT`, order stays PENDING |
+| catalog-service, `order.failed` with quantity -5 | n/a | on `order.failed.DLT`, stock unchanged, event not marked processed |
+
+`scripts/dlt.sh` was checked by hand against the local broker (2026-11-28): two seeded DLT messages were listed
+(partition, offset, key, value), `show` printed the headers, `replay` re-published one with the same key (same
+partition), `replay-all` sent both and then reported "Nothing new to replay" on the second run. A non-DLT topic and
+a missing offset were rejected.
+
+Commands:
+```
+./mvnw -pl payment-service -am verify            # "=== INCIDENT 004 ..." lines
+scripts/dlt.sh topics
+scripts/dlt.sh list order.created.DLT
+```
+
+## Still open
+- Nobody is alerted when something lands on a DLT. Day 4: a metric/alert on DLT message counts.
+- During the up-to-3 s of retries, the partition waits. A long outage turns every event into a DLT entry that must
+  be replayed by hand (`replay-all`), and there's no automatic redrive yet.

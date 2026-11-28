@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mockingDetails;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flashsale.common.event.EventEnvelope;
@@ -111,9 +113,29 @@ class PoisonMessageIT {
 
         assertThat(parked).as("poison message parked on " + DLT).hasSize(1);
         assertThat(parked.get(0).value()).isEqualTo(poison);
-        assertThat(header(parked.get(0), "kafka_dlt-exception-fqcn")).contains("Json");
+        // exception-fqcn holds Spring's wrapper (ListenerExecutionFailedException); the real error is the cause.
+        assertThat(header(parked.get(0), "kafka_dlt-exception-cause-fqcn")).contains("Json");
         assertThat(header(parked.get(0), "kafka_dlt-original-topic")).isEqualTo(OrderCreated.TOPIC);
         assertThat(attempts).as("bad data is not retried").isEqualTo(1);
+    }
+
+    @Test
+    void wellFormedButInvalidEventGoesStraightToTheDlt() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        OrderCreated zeroTotal = new OrderCreated(orderId, UUID.randomUUID(), BigDecimal.ZERO,
+                List.of(new OrderCreated.Item(1, 1, BigDecimal.ZERO)));
+        EventEnvelope<OrderCreated> event = new EventEnvelope<>(UUID.randomUUID(), OrderCreated.TYPE,
+                OrderCreated.VERSION, Instant.now(), zeroTotal);
+
+        send(orderId.toString(), json.writeValueAsString(event));
+
+        List<ConsumerRecord<String, String>> parked = dltRecords(orderId.toString(), Duration.ofSeconds(5));
+        assertThat(parked).hasSize(1);
+        assertThat(header(parked.get(0), "kafka_dlt-exception-cause-fqcn"))
+                .isEqualTo("com.flashsale.common.event.InvalidEventException");
+        assertThat(header(parked.get(0), "kafka_dlt-exception-message")).contains("totalAmount");
+        assertThat(paymentExists(orderId)).isFalse();
+        verify(payments, never()).handle(any()); // rejected before any processing
     }
 
     @Test

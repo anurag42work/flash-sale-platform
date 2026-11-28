@@ -13,4 +13,23 @@ import java.util.UUID;
  * @param data       the event itself, e.g. {@link OrderCreated}
  */
 public record EventEnvelope<T>(UUID eventId, String type, int version, Instant occurredAt, T data) {
+
+    /**
+     * Checks the envelope fields every consumer relies on.
+     *
+     * @return this, for chaining
+     * @throws InvalidEventException if a field is missing or the type is not the one this topic carries
+     */
+    public EventEnvelope<T> requireValid(String expectedType) {
+        if (eventId == null) {
+            throw new InvalidEventException("eventId is missing");
+        }
+        if (!expectedType.equals(type)) {
+            throw new InvalidEventException("type must be " + expectedType + ", was " + type);
+        }
+        if (data == null) {
+            throw new InvalidEventException("data is missing in event " + eventId);
+        }
+        return this;
+    }
 }
