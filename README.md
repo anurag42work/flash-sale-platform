@@ -10,7 +10,7 @@ Work in progress. Design: [docs/design.md](docs/design.md). Open items: [docs/to
 
 | Module | Port | Database | Role |
 |---|---|---|---|
-| gateway-service | 8080 | none | Single entry point: JWT check (JWKS), routing, identity headers, correlation id |
+| gateway-service | 8080 | none (Redis for rate limits) | Single entry point: JWT check (JWKS), routing, identity headers, correlation id, rate limiting |
 | auth-service | 8081 | auth_db | Register/login, RS256 access tokens, rotating refresh tokens, JWKS |
 | catalog-service | 8082 | catalog_db | Products and stock (atomic reservation); releases stock on `order.failed` |
 | order-service | 8083 | order_db | Orders, Idempotency-Key, reserves stock at catalog, outbox, order side of the payment saga, stuck-order reconciliation job |
@@ -135,6 +135,19 @@ unexpected `500` never contains internal details.
 The gateway checks the JWT with auth-service's public key (signature, expiry, issuer), removes any
 `X-User-Id` / `X-User-Roles` the client sent, sets them from the token, and adds `X-Correlation-Id`.
 Paths with traversal tricks (`..`, `%2e`, `%2f`, `;`) are rejected with 400.
+
+**Rate limits** (Redis token bucket, per user with a token, otherwise per client IP; values in the gateway's
+`application.yml`). Over the limit → `429` ProblemDetail with `Retry-After`:
+
+| Route | Limit |
+|---|---|
+| `POST /api/auth/login` | 5 at once, then 1 per 12 s, per IP |
+| `POST /api/orders` | 5 at once, then 2 per second, per user |
+| other auth routes | 10 at once, then 5 per second |
+| products, other order routes | 40 at once, then 20 per second |
+
+If Redis is down, requests are not limited (fail open), so the shop keeps working. See
+[decision 008](docs/decisions/008-rate-limiting.md).
 
 ### auth-service
 
