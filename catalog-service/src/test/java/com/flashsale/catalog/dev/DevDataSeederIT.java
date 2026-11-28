@@ -7,10 +7,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 @Import(TestcontainersConfiguration.class)
+// Close this context after the class: a cached context keeps its Kafka listener running and would react to the
+// next test class's events on the shared broker.
+@DirtiesContext
 @SpringBootTest
 @ActiveProfiles("dev")
 class DevDataSeederIT {

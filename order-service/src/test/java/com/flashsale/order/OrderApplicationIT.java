@@ -8,10 +8,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @Import(TestcontainersConfiguration.class)
+// Close this context after the class: a cached context keeps its Kafka listeners and outbox relay running and
+// would react to the next test class's events on the shared broker.
+@DirtiesContext
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class OrderApplicationIT {
 
@@ -36,6 +40,7 @@ class OrderApplicationIT {
                         + "WHERE table_schema = 'public' AND table_name <> 'flyway_schema_history'",
                 String.class);
 
-        assertThat(tables).containsExactlyInAnyOrder("orders", "order_items", "idempotency_keys", "outbox");
+        assertThat(tables).containsExactlyInAnyOrder("orders", "order_items", "idempotency_keys", "outbox",
+                "processed_events");
     }
 }

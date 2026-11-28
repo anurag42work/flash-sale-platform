@@ -12,10 +12,10 @@ Work in progress. Design: [docs/design.md](docs/design.md). Open items: [docs/to
 |---|---|---|---|
 | gateway-service | 8080 | none | Single entry point: JWT check (JWKS), routing, identity headers, correlation id |
 | auth-service | 8081 | auth_db | Register/login, RS256 access tokens, rotating refresh tokens, JWKS |
-| catalog-service | 8082 | catalog_db | Products and stock (atomic reservation) |
-| order-service | 8083 | order_db | Orders, Idempotency-Key, reserves stock at catalog |
-| payment-service | 8084 | payment_db | Skeleton (Day 2) |
-| common-lib | none | none | Shared header names and the page response |
+| catalog-service | 8082 | catalog_db | Products and stock (atomic reservation); releases stock on `order.failed` |
+| order-service | 8083 | order_db | Orders, Idempotency-Key, reserves stock at catalog, outbox, order side of the payment saga |
+| payment-service | 8084 | payment_db | Consumes `order.created`, charges a mock provider (latency and decline rate set by env), publishes the result via its outbox |
+| common-lib | none | none | Shared header names, the page response, event records and the event envelope |
 
 Stack: Java 21, Spring Boot 3.5, Spring Cloud 2025.0, PostgreSQL 16 + Flyway, Redis 7, Kafka 3.9 (KRaft).
 
@@ -26,6 +26,23 @@ Stack: Java 21, Spring Boot 3.5, Spring Cloud 2025.0, PostgreSQL 16 + Flyway, Re
 | 001 | Overselling under concurrent reservations | 200 buyers, 50 in stock → 200 sold | Atomic conditional `UPDATE ... WHERE available >= :qty`, `CHECK (available >= 0)` | [incident](docs/incidents/001-overselling.md), [decision](docs/decisions/001-stock-concurrency.md) |
 | 002 | Duplicate orders on client retry | Same request twice → 2 orders, stock taken twice | Required `Idempotency-Key`, stored response replayed | [incident](docs/incidents/002-duplicate-orders.md), [decision](docs/decisions/002-idempotency.md) |
 | 003 | Dual write: order saved, event lost | Kafka send fails after the DB commit → order PENDING, 0 events | Transactional outbox: order + event row in one transaction, `SKIP LOCKED` relay publishes (Kafka paused → all 5 events delivered 690 ms after unpause) | [incident](docs/incidents/003-dual-write.md), [decision](docs/decisions/003-dual-write.md) |
+
+## Order saga (Kafka, Day 2)
+
+```
+POST /api/orders -> order PENDING + outbox row (one transaction) -> 202
+order-service relay --order.created--> payment-service: charge (idempotent per order) -> payment row + outbox
+payment-service relay --payment.completed--> order-service: PENDING -> CONFIRMED
+                     --payment.failed-->    order-service: PENDING -> FAILED + outbox --order.failed--> catalog: stock released
+```
+
+Not run end to end across all services yet (each service's side is tested with Testcontainers Kafka). The full
+run is planned on the VM (step 2.8).
+
+Every consumer is idempotent: the event id goes into `processed_events` in the same transaction as the change,
+and the Kafka offset is acknowledged only after the commit (at-least-once delivery, each event applied once).
+Status changes only happen from PENDING. Details: [decision 003](docs/decisions/003-dual-write.md),
+[decision 004](docs/decisions/004-saga-stock-release.md).
 
 ## Run locally
 
@@ -131,7 +148,7 @@ Paths with traversal tricks (`..`, `%2e`, `%2f`, `;`) are rejected with 400.
 | Endpoint | Result |
 |---|---|
 | `POST /api/orders` | **`Idempotency-Key` required** (1–64 of `A-Z a-z 0-9 - _`). 202 Accepted: PENDING order with price snapshot (an `OrderCreated` event goes to Kafka topic `order.created`). Retry with the same key → same 202 + `Idempotent-Replayed: true`. 400 missing key, 409 `OUT_OF_STOCK`, 409 `IDEMPOTENCY_KEY_IN_PROGRESS`, 422 unknown product, 422 `IDEMPOTENCY_KEY_REUSED` (same key, other body), 503 catalog down or slow |
-| `GET /api/orders/{id}` | own order only (someone else's → 404) |
+| `GET /api/orders/{id}` | own order only (someone else's → 404). `status`: PENDING, then CONFIRMED or FAILED once payment (async) has decided |
 | `GET /api/orders` | own orders, newest first, paged |
 
 ## Test
@@ -147,6 +164,6 @@ Paths with traversal tricks (`..`, `%2e`, `%2f`, `;`) are rejected with 400.
 In PowerShell, put each `-D...` argument in quotes.
 
 - `*Test` classes run with Surefire (no Docker).
-- `*IT` classes run with Failsafe and start a real Postgres via Testcontainers, so Docker must be running.
+- `*IT` classes run with Failsafe and start a real Postgres (and one shared Kafka) via Testcontainers, so Docker must be running.
 - Optional, for faster local runs: add `testcontainers.reuse.enable=true` to `~/.testcontainers.properties`
   to keep the test Postgres container between runs.

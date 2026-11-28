@@ -9,6 +9,11 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
   transaction now releases its reservations. Still open: catalog times out *after* reserving, or order-service
   crashes between reserve and commit, so the stock stays reserved with no order.
   → Saga (2.3), reconciliation job (2.6).
+- [ ] **A Kafka message that always fails is skipped silently.** All consumers (payment, order, catalog) use Spring
+  Kafka's default error handler: about 10 quick retries, then a log line and the offset moves on. The event is lost.
+  → Step 2.4 (incident 004: retry with backoff + dead-letter topic).
+- [ ] **An order can stay PENDING forever** if its payment event never arrives (payment-service down for a long
+  time, skipped message). → Step 2.6 (stuck-order reconciliation).
 - [ ] **Outbox head-of-line blocking.** The relay stops at the first failed row (to keep order). A row that can
   never be published (e.g. payload over `max.request.size`) blocks all later events. Add max attempts + a
   "parked" state, an alert on `attempts`, or skip rows of other aggregates. → Step 2.4 (poison messages) or 2.6.
@@ -25,9 +30,8 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
   → Step 2.5 (Resilience4j, incident 005).
 - [ ] **VM must not run with the `dev` profile** (it seeds 10k products). run-local.sh defaults to `dev`.
   → Step 2.8 (compose sets the profile explicitly).
-- [ ] **`Order` has no `@Version`.** Once the saga updates status from Kafka (2.3) and the reconciliation job
-  runs (2.6), two updates could overwrite each other. Add optimistic locking or conditional status updates
-  (`UPDATE ... WHERE status = 'PENDING'`). → Steps 2.3 / 2.6.
+- [ ] **Status changes must stay conditional.** Since 2.3b the saga moves orders with `UPDATE ... WHERE status = 'PENDING'`
+  (no `@Version` needed). The reconciliation job (2.6) must use the same rule, or it can overwrite a saga result.
 
 ## Low
 

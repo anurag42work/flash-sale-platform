@@ -1,6 +1,7 @@
 package com.flashsale.order.config;
 
 import com.flashsale.common.event.OrderCreated;
+import com.flashsale.common.event.OrderFailed;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -18,5 +19,11 @@ class KafkaTopicConfig {
     NewTopic orderCreatedTopic(@Value("${order.kafka.partitions:3}") int partitions,
             @Value("${order.kafka.replicas:1}") int replicas) {
         return TopicBuilder.name(OrderCreated.TOPIC).partitions(partitions).replicas(replicas).build();
+    }
+
+    @Bean
+    NewTopic orderFailedTopic(@Value("${order.kafka.partitions:3}") int partitions,
+            @Value("${order.kafka.replicas:1}") int replicas) {
+        return TopicBuilder.name(OrderFailed.TOPIC).partitions(partitions).replicas(replicas).build();
     }
 }

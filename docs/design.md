@@ -37,6 +37,7 @@ one Postgres role per database. No cross-service FKs (different databases); FKs 
 |---|---|---|---|
 | products | `id bigint GENERATED ALWAYS AS IDENTITY PK`, `sku varchar(64) NOT NULL UNIQUE`, `name varchar(200) NOT NULL`, `description text`, `price numeric(12,2) NOT NULL CHECK (price > 0)`, `active boolean NOT NULL DEFAULT true`, `created_at`, `updated_at` | unique(sku) | V1 |
 | inventory | `product_id bigint PK FK→products ON DELETE RESTRICT`, `available int NOT NULL`, `updated_at` | PK | V1; `CHECK (available >= 0)` in V2 (fix for incident 001, step 1.6) |
+| processed_events | same as order_db (idempotent `order.failed` consumer) | PK | V3 (step 2.3) |
 
 Inventory is a separate 1:1 table so the hot, frequently updated stock row is isolated from the
 product row that is read and cached.
@@ -49,7 +50,7 @@ product row that is read and cached.
 | order_items | `id bigint GENERATED ALWAYS AS IDENTITY PK`, `order_id uuid NOT NULL FK→orders ON DELETE CASCADE`, `product_id bigint NOT NULL`, `quantity int NOT NULL CHECK (quantity > 0)`, `unit_price numeric(12,2) NOT NULL CHECK (unit_price >= 0)` (price snapshot), `UNIQUE (order_id, product_id)` | unique index also serves lookups by order_id | V1 |
 | idempotency_keys | `PRIMARY KEY (user_id uuid, idem_key varchar(64))`, `request_hash char(64) NOT NULL`, `status varchar(16) NOT NULL CHECK (status IN ('IN_PROGRESS','COMPLETED'))`, `response_status int NULL`, `response_body jsonb NULL`, `created_at`, `updated_at`, `CHECK (status = 'IN_PROGRESS' OR response_status IS NOT NULL)` | (created_at) for TTL cleanup | V2 (step 1.7) |
 | outbox | `id uuid PK` (= eventId), `aggregate_id uuid NOT NULL`, `topic varchar(255) NOT NULL` (added in 2.2), `event_type varchar(64) NOT NULL`, `payload jsonb NOT NULL`, `created_at`, `sent_at timestamptz NULL`, `attempts int NOT NULL DEFAULT 0 CHECK (attempts >= 0)`, `last_error text NULL` | partial `(created_at) WHERE sent_at IS NULL` | Day 2 (step 2.2, V3) |
-| processed_events | `event_id uuid PK`, `event_type varchar(64) NOT NULL`, `processed_at` | PK | Day 2 (step 2.3) |
+| processed_events | `event_id uuid PK`, `event_type varchar(64) NOT NULL`, `processed_at` | PK | V4 (step 2.3) |
 
 Planned Day 2 index: `orders (status, created_at)` for the stuck-order reconciliation job (step 2.6).
 
@@ -59,7 +60,7 @@ Planned Day 2 index: `orders (status, created_at)` for the stuck-order reconcili
 |---|---|---|---|
 | payments | `id uuid PK`, `order_id uuid NOT NULL UNIQUE` (one payment per order: last-line duplicate guard), `amount numeric(12,2) NOT NULL CHECK (amount > 0)`, `status varchar(16) NOT NULL CHECK (status IN ('COMPLETED','FAILED'))`, `failure_reason varchar(64) NULL`, `created_at`, `updated_at` | unique(order_id) | V1 |
 | processed_events | same as order_db | PK | V1 |
-| outbox | same as order_db | partial, as above | Day 2 (step 2.3) |
+| outbox | same as order_db | partial, as above | V2 (step 2.3) |
 
 ### Deliberate omissions (for incident demos, documented so they are honest)
 
@@ -115,3 +116,8 @@ Micrometer Prometheus + tracing (Day 4).
 | 21 | Outbox relay locking | Hold the row locks for the batch while waiting for Kafka acks; stop the batch at the first failure | Lease column (`locked_until`) and send outside a transaction; skip failed rows | Simple and keeps per-order order vs one connection held during sends and head-of-line blocking on a row that can never be sent |
 | 22 | Event envelope | `EventEnvelope<T>` in common-lib: eventId (= outbox id), type, version, occurredAt, data | Bare event + Kafka headers for the metadata | Self-contained JSON consumers can dedupe and version on vs a little repetition per message |
 | 23 | Producer | `acks=all`, `enable.idempotence=true`, `delivery.timeout.ms` 10 s, relay waits up to 15 s | Defaults (2 min delivery timeout) | Failed sends show up quickly and are retried by the relay vs more retries under a slow broker |
+| 24 | Stock release on a failed order (step 2.3) | `order.failed` event via order-service outbox; catalog consumes it with `processed_events` | Order-service calls catalog `/release` over HTTP | Release happens once and survives crashes vs catalog needs Kafka and stock returns a moment later. `docs/decisions/004-saga-stock-release.md` |
+| 25 | Consumers | Ack the offset after the DB commit (`manual_immediate`, auto-commit off) + `processed_events` claim in the same transaction | Auto-commit offsets | At-least-once + dedupe vs at-most-once (events can be lost) |
+| 26 | Payment provider call | Outside the DB transaction, idempotency key = orderId (mock remembers the first result) | Inside the transaction | No connection held during a slow call vs a duplicate can reach the provider (the key makes it harmless) |
+| 27 | Order status change | `UPDATE ... WHERE status = 'PENDING'` (saga, later reconciliation) | JPA `@Version` | Only legal transitions, one statement vs bypasses the JPA entity |
+| 28 | Test isolation with one shared Kafka | Random consumer group per test context + `@DirtiesContext` on every IT | Shared group, cached contexts | No cross-test consumption vs a fresh context per IT class |

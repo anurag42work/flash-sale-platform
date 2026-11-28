@@ -26,6 +26,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -42,6 +43,9 @@ import org.springframework.test.context.DynamicPropertySource;
  * second order or reserve stock a second time.
  */
 @Import(TestcontainersConfiguration.class)
+// Close this context after the class: a cached context keeps its Kafka listeners and outbox relay running and
+// would react to the next test class's events on the shared broker.
+@DirtiesContext
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class IdempotencyIT {
 

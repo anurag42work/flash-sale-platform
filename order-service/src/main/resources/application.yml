@@ -18,7 +18,16 @@ spring:
       ddl-auto: validate
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-    # Key and value are Strings (Boot's default serializers); the value is the event as JSON.
+    # Key and value are Strings (Boot's default (de)serializers); the value is the event envelope as JSON.
+    consumer:
+      # All order-service instances share this group (payment.completed / payment.failed).
+      group-id: order-service
+      # A new consumer group starts at the oldest event, so nothing published before the first start is skipped.
+      auto-offset-reset: earliest
+      # Offsets are committed by our code (ack after the DB commit), never on a timer.
+      enable-auto-commit: false
+    listener:
+      ack-mode: manual_immediate
     producer:
       # Wait until all in-sync replicas have the event before the send counts as done (the relay marks the row
       # sent only after that). Idempotence stops the producer's own retries from writing a duplicate.
@@ -40,7 +49,7 @@ idempotency:
 
 order:
   kafka:
-    # Topic order.created. One broker locally and on the VM, so 1 replica.
+    # Topics order.created / order.failed. One broker locally and on the VM, so 1 replica.
     partitions: ${ORDER_TOPIC_PARTITIONS:3}
     replicas: ${ORDER_TOPIC_REPLICAS:1}
 

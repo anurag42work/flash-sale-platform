@@ -19,6 +19,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -33,6 +34,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * Correct result: exactly 50 calls succeed (200), 150 get 409 OUT_OF_STOCK, and the stock ends at 0.
  */
 @Import(TestcontainersConfiguration.class)
+// Close this context after the class: a cached context keeps its Kafka listener running and would react to the
+// next test class's events on the shared broker.
+@DirtiesContext
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class InventoryConcurrencyIT {
 
