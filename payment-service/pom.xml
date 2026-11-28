@@ -43,6 +43,12 @@
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
         </dependency>
+        <!-- Timeout, retry, circuit breaker, bulkhead around the payment provider (incident 005).
+             Version from the Spring Cloud BOM (spring-cloud-circuitbreaker-dependencies -> resilience4j-bom). -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot3</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.flashsale</groupId>
             <artifactId>common-lib</artifactId>

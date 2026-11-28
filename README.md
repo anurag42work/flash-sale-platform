@@ -14,7 +14,7 @@ Work in progress. Design: [docs/design.md](docs/design.md). Open items: [docs/to
 | auth-service | 8081 | auth_db | Register/login, RS256 access tokens, rotating refresh tokens, JWKS |
 | catalog-service | 8082 | catalog_db | Products and stock (atomic reservation); releases stock on `order.failed` |
 | order-service | 8083 | order_db | Orders, Idempotency-Key, reserves stock at catalog, outbox, order side of the payment saga |
-| payment-service | 8084 | payment_db | Consumes `order.created`, charges a mock provider (latency and decline rate set by env), publishes the result via its outbox |
+| payment-service | 8084 | payment_db | Consumes `order.created`, charges a mock provider (latency, decline and error rate set by env) through Resilience4j, publishes the result via its outbox |
 | common-lib | none | none | Shared header names, the page response, event records and the event envelope |
 
 Stack: Java 21, Spring Boot 3.5, Spring Cloud 2025.0, PostgreSQL 16 + Flyway, Redis 7, Kafka 3.9 (KRaft).
@@ -27,6 +27,7 @@ Stack: Java 21, Spring Boot 3.5, Spring Cloud 2025.0, PostgreSQL 16 + Flyway, Re
 | 002 | Duplicate orders on client retry | Same request twice → 2 orders, stock taken twice | Required `Idempotency-Key`, stored response replayed | [incident](docs/incidents/002-duplicate-orders.md), [decision](docs/decisions/002-idempotency.md) |
 | 003 | Dual write: order saved, event lost | Kafka send fails after the DB commit → order PENDING, 0 events | Transactional outbox: order + event row in one transaction, `SKIP LOCKED` relay publishes (Kafka paused → all 5 events delivered 690 ms after unpause) | [incident](docs/incidents/003-dual-write.md), [decision](docs/decisions/003-dual-write.md) |
 | 004 | Poison message / failing event dropped | Default handler: 10 instant attempts, then skipped. Bad JSON and an 8 s DB outage both lost, 0 on any DLT | Backoff (3 attempts) then `<topic>.DLT`; bad data straight to the DLT; `scripts/dlt.sh` lists and replays | [incident](docs/incidents/004-poison-message.md), [decision](docs/decisions/005-dead-letter-topics.md) |
+| 005 | Slow payment provider | Provider 5000 ms, 50 orders: 5 decided, 45 PENDING after 30 s | Resilience4j timeout 2 s, retry with jitter, circuit breaker (failure + slow-call rate), thread-pool bulkhead; fallback FAILED `PROVIDER_UNAVAILABLE` (stock released): 50 of 50 decided in 5.9–6.3 s (2 runs) | [incident](docs/incidents/005-slow-payment.md), [decision](docs/decisions/006-provider-resilience.md) |
 
 ## Order saga (Kafka, Day 2)
 

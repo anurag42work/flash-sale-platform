@@ -9,7 +9,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
- * Stands in for an external payment provider (Stripe, Adyen...). Configurable latency and decline rate.
+ * Stands in for an external payment provider (Stripe, Adyen...). Configurable latency, decline rate and error rate.
+ * Call it through {@link com.flashsale.payment.payment.ResilientPaymentGateway}, never directly (incident 005).
  *
  * <p>Idempotent per order, like real providers with an idempotency key: charging the same orderId again returns
  * the first result instead of charging twice. That matters because Kafka can deliver the same OrderCreated twice
@@ -36,6 +37,10 @@ public class MockPaymentProvider {
     /** @param idempotencyKey the order id: one charge per order, however often it is asked for */
     public ChargeResult charge(UUID idempotencyKey, BigDecimal amount) {
         sleep(properties.latencyMs());
+        // A technical error is not remembered: like a 503, the next call may work (that is why retrying helps).
+        if (properties.errorRatePercent() > 0 && random.nextInt(100) < properties.errorRatePercent()) {
+            throw new ProviderUnavailableException("simulated: payment provider unavailable");
+        }
         return resultsByOrder.computeIfAbsent(idempotencyKey, key ->
                 random.nextInt(100) < properties.failureRatePercent()
                         ? ChargeResult.declined("DECLINED")

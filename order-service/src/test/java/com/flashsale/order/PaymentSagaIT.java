@@ -147,6 +147,18 @@ class PaymentSagaIT {
     }
 
     @Test
+    void providerUnavailableIsStoredAsTheFailureReason() throws Exception {
+        UUID orderId = createOrder();
+        publish(PaymentFailed.TOPIC, orderId,
+                envelope(PaymentFailed.TYPE, new PaymentFailed(orderId, UUID.randomUUID(), "PROVIDER_UNAVAILABLE")));
+
+        awaitTrue(() -> "FAILED".equals(status(orderId)));
+
+        assertThat(jdbc.queryForObject("SELECT failure_reason FROM orders WHERE id = ?", String.class, orderId))
+                .isEqualTo("PAYMENT_PROVIDER_UNAVAILABLE");
+    }
+
+    @Test
     void aLatePaymentCompletedCannotResurrectAFailedOrder() throws Exception {
         UUID orderId = createOrder();
         publish(PaymentFailed.TOPIC, orderId,

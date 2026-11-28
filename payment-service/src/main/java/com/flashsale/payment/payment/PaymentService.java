@@ -5,7 +5,6 @@ import com.flashsale.common.event.OrderCreated;
 import com.flashsale.common.event.PaymentCompleted;
 import com.flashsale.common.event.PaymentFailed;
 import com.flashsale.payment.outbox.OutboxWriter;
-import com.flashsale.payment.provider.MockPaymentProvider;
 import com.flashsale.payment.provider.MockPaymentProvider.ChargeResult;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -30,13 +29,13 @@ public class PaymentService {
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
 
     private final JdbcClient jdbc;
-    private final MockPaymentProvider provider;
+    private final ResilientPaymentGateway gateway;
     private final OutboxWriter outbox;
     private final TransactionTemplate tx;
 
-    PaymentService(JdbcClient jdbc, MockPaymentProvider provider, OutboxWriter outbox, TransactionTemplate tx) {
+    PaymentService(JdbcClient jdbc, ResilientPaymentGateway gateway, OutboxWriter outbox, TransactionTemplate tx) {
         this.jdbc = jdbc;
-        this.provider = provider;
+        this.gateway = gateway;
         this.outbox = outbox;
         this.tx = tx;
     }
@@ -48,8 +47,9 @@ public class PaymentService {
             return;
         }
 
-        // Outside the DB transaction: no connection is held while the (possibly slow) provider works.
-        ChargeResult result = provider.charge(order.orderId(), order.totalAmount());
+        // Outside the DB transaction: no connection is held while the (possibly slow) provider works. Through the
+        // gateway: timeout, retry, circuit breaker, bulkhead (incident 005); "unavailable" comes back as a decline.
+        ChargeResult result = gateway.charge(order.orderId(), order.totalAmount());
 
         tx.executeWithoutResult(status -> {
             int claimed = jdbc.sql("""

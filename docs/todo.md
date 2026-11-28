@@ -9,6 +9,9 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
   transaction now releases its reservations. Still open: catalog times out *after* reserving, or order-service
   crashes between reserve and commit, so the stock stays reserved with no order.
   → Saga (2.3), reconciliation job (2.6).
+- [ ] **A payment timeout is not proof that nobody was charged** (source: step 2.5). Payments FAILED with
+  `PROVIDER_UNAVAILABLE` may have been charged by a real provider after we gave up. Needs a reconciliation job that
+  asks the provider for the final status (refund or confirm) and/or provider webhooks. → With 2.6 or the continuation plan.
 - [ ] **An order can stay PENDING forever** if its payment event never arrives (payment-service down for a long
   time, or its event parked on a DLT and not replayed yet). → Step 2.6 (stuck-order reconciliation).
 - [ ] **Outbox head-of-line blocking.** The relay stops at the first failed row (to keep order). A row that can
@@ -24,7 +27,7 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
 ## Medium
 
 - [ ] **Gateway returns 500 when a downstream service is down** (connection refused); no timeout or circuit breaker.
-  → Step 2.5 (Resilience4j, incident 005).
+  → Not covered by 2.5 (that was the payment provider). Planned: Spring Cloud CircuitBreaker + timeouts on gateway routes, before 2.8.
 - [ ] **VM must not run with the `dev` profile** (it seeds 10k products). run-local.sh defaults to `dev`.
   → Step 2.8 (compose sets the profile explicitly).
 - [ ] **Status changes must stay conditional.** Since 2.3b the saga moves orders with `UPDATE ... WHERE status = 'PENDING'`

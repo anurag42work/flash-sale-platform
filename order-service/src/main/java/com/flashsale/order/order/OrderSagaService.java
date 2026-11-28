@@ -26,7 +26,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class OrderSagaService {
 
-    static final String PAYMENT_DECLINED = "PAYMENT_DECLINED";
     private static final Logger log = LoggerFactory.getLogger(OrderSagaService.class);
 
     private final JdbcClient jdbc;
@@ -53,11 +52,13 @@ public class OrderSagaService {
 
     public void onPaymentFailed(EventEnvelope<PaymentFailed> event) {
         UUID orderId = event.data().orderId();
+        // e.g. PAYMENT_DECLINED, PAYMENT_PROVIDER_UNAVAILABLE (incident 005): the order shows why payment failed.
+        String reason = "PAYMENT_" + event.data().reason();
         tx.executeWithoutResult(status -> {
             if (!claim(event.eventId(), event.type())) {
                 return;
             }
-            if (moveFromPending(orderId, OrderStatus.FAILED, PAYMENT_DECLINED) == 0) {
+            if (moveFromPending(orderId, OrderStatus.FAILED, reason) == 0) {
                 log.warn("PaymentFailed for order {} ignored: order not PENDING (or unknown)", orderId);
                 return; // no OrderFailed: the stock is released only once, by the transition that really happened
             }
@@ -67,7 +68,7 @@ public class OrderSagaService {
                     .query((rs, n) -> new OrderFailed.Item(rs.getLong("product_id"), rs.getInt("quantity")))
                     .list();
             outbox.add(OrderFailed.TOPIC, orderId, OrderFailed.TYPE, OrderFailed.VERSION,
-                    new OrderFailed(orderId, PAYMENT_DECLINED, items));
+                    new OrderFailed(orderId, reason, items));
         });
     }
 
