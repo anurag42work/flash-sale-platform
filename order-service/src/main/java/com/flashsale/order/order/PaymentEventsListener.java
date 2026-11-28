@@ -48,8 +48,16 @@ class PaymentEventsListener {
     void onPaymentFailed(ConsumerRecord<String, String> record, Acknowledgment ack) throws JsonProcessingException {
         EventEnvelope<PaymentFailed> event = json.readValue(record.value(), FAILED).requireValid(PaymentFailed.TYPE);
         requireOrderId(event.data().orderId());
+        requireReasonCode(event.data().reason());
         saga.onPaymentFailed(event);
         ack.acknowledge();
+    }
+
+    /** Stored as "PAYMENT_" + reason in orders.failure_reason (varchar 64): a short upper-case code only. */
+    private static void requireReasonCode(String reason) {
+        if (reason == null || !reason.matches("[A-Z_]{1,40}")) {
+            throw new InvalidEventException("reason must be an upper-case code, was " + reason);
+        }
     }
 
     private static void requireOrderId(UUID orderId) {

@@ -1,8 +1,11 @@
 package com.flashsale.payment;
 
+import com.flashsale.common.event.OrderCreated;
+import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Bean;
+import org.springframework.kafka.config.TopicBuilder;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.kafka.KafkaContainer;
 
@@ -32,5 +35,14 @@ class TestcontainersConfiguration {
     @ServiceConnection
     KafkaContainer kafka() {
         return KAFKA;
+    }
+
+    /**
+     * In production order-service declares order.created with 3 partitions. Nobody declares it in payment's tests,
+     * so the broker would auto-create it with 1 partition and only one of the 3 listener threads would get work.
+     */
+    @Bean
+    NewTopic orderCreatedTopic() {
+        return TopicBuilder.name(OrderCreated.TOPIC).partitions(3).replicas(1).build();
     }
 }

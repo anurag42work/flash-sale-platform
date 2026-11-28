@@ -26,8 +26,14 @@ spring:
       auto-offset-reset: earliest
       # Offsets are committed by our code (ack after the DB commit), never on a timer.
       enable-auto-commit: false
+      # Small polls (default 500): the worst case for one record is ~7 s (3 attempts x 2 s timeout + backoff), so
+      # 10 records stay far below max.poll.interval.ms (300 s). Above it Kafka assumes the consumer is dead,
+      # rebalances and redelivers the whole poll (incident 005).
+      max-poll-records: 10
     listener:
       ack-mode: manual_immediate
+      # One consumer thread per order.created partition (3): one slow charge no longer holds up all partitions.
+      concurrency: 3
     producer:
       # Same producer settings as order-service (docs/design.md decision 23).
       acks: all
@@ -43,10 +49,66 @@ payment:
     latency-ms: ${PAYMENT_PROVIDER_LATENCY_MS:100}
     # ... and this share of charges is declined (0-100).
     failure-rate-percent: ${PAYMENT_PROVIDER_FAILURE_RATE:10}
+    # ... and this share of calls fails with "provider unavailable" (a technical error, retried) (0-100).
+    error-rate-percent: ${PAYMENT_PROVIDER_ERROR_RATE:0}
   kafka:
     # Topics payment.completed / payment.failed. One broker locally and on the VM, so 1 replica.
     partitions: ${PAYMENT_TOPIC_PARTITIONS:3}
     replicas: ${PAYMENT_TOPIC_REPLICAS:1}
+
+# Incident 005: protection around the payment provider (ResilientPaymentGateway). Every value is explained in
+# docs/incidents/005-slow-payment.md. Order: Retry( CircuitBreaker( TimeLimiter( ThreadPoolBulkhead( call ) ) ) ).
+resilience4j:
+  timelimiter:
+    instances:
+      paymentProvider:
+        # A normal charge takes ~100 ms; 2 s is generous for a healthy provider and short for the consumer.
+        timeout-duration: 2s
+        cancel-running-future: true
+  circuitbreaker:
+    instances:
+      paymentProvider:
+        sliding-window-type: COUNT_BASED
+        # Judge the provider on the last 20 calls, but only once at least 10 were made (no verdict on 2 calls).
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        # Open when half of the calls fail ...
+        failure-rate-threshold: 50
+        # ... or when half of them are slow (> 1.5 s): slow-but-successful calls also tie up our threads.
+        slow-call-duration-threshold: 1500ms
+        slow-call-rate-threshold: 50
+        # Stay open 10 s (fail fast, give the provider air), then let 3 test calls through (half-open).
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        # Only technical errors count as failures. A decline is a normal answer (not an exception at all).
+        record-exceptions:
+          - java.util.concurrent.TimeoutException
+          - com.flashsale.payment.provider.ProviderUnavailableException
+          - io.github.resilience4j.bulkhead.BulkheadFullException
+  retry:
+    instances:
+      paymentProvider:
+        # 3 attempts in total: rides out a blip without multiplying the load on a struggling provider.
+        max-attempts: 3
+        # 200 ms, then 400 ms, each +-50 % random (jitter), so many consumers don't retry at the same moment.
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        enable-randomized-wait: true
+        randomized-wait-factor: 0.5
+        # Only transient errors. Not CallNotPermittedException: an open breaker means "stop", not "try again".
+        retry-exceptions:
+          - java.util.concurrent.TimeoutException
+          - com.flashsale.payment.provider.ProviderUnavailableException
+          - io.github.resilience4j.bulkhead.BulkheadFullException
+  thread-pool-bulkhead:
+    instances:
+      paymentProvider:
+        # 3 threads = 3 consumer threads. A timed-out call keeps its thread until the provider answers; the
+        # small pool + queue cap how many of those can pile up. Full -> BulkheadFullException (fail fast).
+        core-thread-pool-size: 3
+        max-thread-pool-size: 3
+        queue-capacity: 3
 
 outbox:
   poll-interval: ${OUTBOX_POLL_INTERVAL:500ms}

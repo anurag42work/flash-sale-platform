@@ -17,7 +17,7 @@ class MockPaymentProviderTest {
 
     @Test
     void zeroPercentApprovesEveryCharge() {
-        MockPaymentProvider provider = new MockPaymentProvider(new ProviderProperties(0, 0));
+        MockPaymentProvider provider = new MockPaymentProvider(new ProviderProperties(0, 0, 0));
 
         for (int i = 0; i < 100; i++) {
             assertThat(provider.charge(UUID.randomUUID(), AMOUNT).approved()).isTrue();
@@ -26,7 +26,7 @@ class MockPaymentProviderTest {
 
     @Test
     void hundredPercentDeclinesEveryChargeWithAReason() {
-        MockPaymentProvider provider = new MockPaymentProvider(new ProviderProperties(0, 100));
+        MockPaymentProvider provider = new MockPaymentProvider(new ProviderProperties(0, 100, 0));
 
         ChargeResult result = provider.charge(UUID.randomUUID(), AMOUNT);
 
@@ -37,7 +37,7 @@ class MockPaymentProviderTest {
     @Test
     void sameOrderAlwaysGetsTheFirstResult() {
         // 50 %: without the idempotency key, repeated charges of one order would flip between approved/declined.
-        MockPaymentProvider provider = new MockPaymentProvider(new ProviderProperties(0, 50), new Random(42));
+        MockPaymentProvider provider = new MockPaymentProvider(new ProviderProperties(0, 50, 0), new Random(42));
         UUID order = UUID.randomUUID();
         ChargeResult first = provider.charge(order, AMOUNT);
 
@@ -51,7 +51,7 @@ class MockPaymentProviderTest {
 
     @Test
     void latencyIsApplied() {
-        MockPaymentProvider provider = new MockPaymentProvider(new ProviderProperties(50, 0));
+        MockPaymentProvider provider = new MockPaymentProvider(new ProviderProperties(50, 0, 0));
 
         long start = System.nanoTime();
         provider.charge(UUID.randomUUID(), AMOUNT);
@@ -60,9 +60,19 @@ class MockPaymentProviderTest {
     }
 
     @Test
+    void errorRateThrowsProviderUnavailableAndIsNotRememberedPerOrder() {
+        MockPaymentProvider failing = new MockPaymentProvider(new ProviderProperties(0, 0, 100));
+        UUID order = UUID.randomUUID();
+
+        assertThatThrownBy(() -> failing.charge(order, AMOUNT)).isInstanceOf(ProviderUnavailableException.class);
+        assertThatThrownBy(() -> failing.charge(order, AMOUNT)).isInstanceOf(ProviderUnavailableException.class);
+        assertThatThrownBy(() -> new ProviderProperties(0, 0, 101)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void invalidSettingsAreRejectedAtStartup() {
-        assertThatThrownBy(() -> new ProviderProperties(-1, 0)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new ProviderProperties(0, 101)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new ProviderProperties(0, -1)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ProviderProperties(-1, 0, 0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ProviderProperties(0, 101, 0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ProviderProperties(0, -1, 0)).isInstanceOf(IllegalArgumentException.class);
     }
 }
