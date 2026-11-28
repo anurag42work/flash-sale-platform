@@ -21,7 +21,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * outbox row. A redelivered event finds its id already claimed and does nothing.
  *
  * <p>Status changes are conditional ({@code WHERE status = 'PENDING'}): a late or out-of-order event can't move an
- * order that already left PENDING (e.g. a PaymentCompleted arriving after the order FAILED).
+ * order that already left PENDING (e.g. a PaymentCompleted arriving after the order FAILED). The reconciliation job
+ * (step 2.6) uses the same transitions, so the job and a late event can never both act on one order.
  */
 @Service
 public class OrderSagaService {
@@ -41,10 +42,7 @@ public class OrderSagaService {
     public void onPaymentCompleted(EventEnvelope<PaymentCompleted> event) {
         UUID orderId = event.data().orderId();
         tx.executeWithoutResult(status -> {
-            if (!claim(event.eventId(), event.type())) {
-                return;
-            }
-            if (moveFromPending(orderId, OrderStatus.CONFIRMED, null) == 0) {
+            if (claim(event.eventId(), event.type()) && !confirmInTx(orderId)) {
                 log.warn("PaymentCompleted for order {} ignored: order not PENDING (or unknown)", orderId);
             }
         });
@@ -55,21 +53,39 @@ public class OrderSagaService {
         // e.g. PAYMENT_DECLINED, PAYMENT_PROVIDER_UNAVAILABLE (incident 005): the order shows why payment failed.
         String reason = "PAYMENT_" + event.data().reason();
         tx.executeWithoutResult(status -> {
-            if (!claim(event.eventId(), event.type())) {
-                return;
-            }
-            if (moveFromPending(orderId, OrderStatus.FAILED, reason) == 0) {
+            if (claim(event.eventId(), event.type()) && !failInTx(orderId, reason)) {
                 log.warn("PaymentFailed for order {} ignored: order not PENDING (or unknown)", orderId);
-                return; // no OrderFailed: the stock is released only once, by the transition that really happened
             }
-            List<OrderFailed.Item> items = jdbc.sql(
-                            "SELECT product_id, quantity FROM order_items WHERE order_id = :id ORDER BY product_id")
-                    .param("id", orderId)
-                    .query((rs, n) -> new OrderFailed.Item(rs.getLong("product_id"), rs.getInt("quantity")))
-                    .list();
-            outbox.add(OrderFailed.TOPIC, orderId, OrderFailed.TYPE, OrderFailed.VERSION,
-                    new OrderFailed(orderId, reason, items));
         });
+    }
+
+    /** Used by the reconciliation job: same rules as the events, in its own transaction. @return true if changed */
+    public boolean confirmIfPending(UUID orderId) {
+        return Boolean.TRUE.equals(tx.execute(status -> confirmInTx(orderId)));
+    }
+
+    /** Used by the reconciliation job: same rules as the events, in its own transaction. @return true if changed */
+    public boolean failIfPending(UUID orderId, String reason) {
+        return Boolean.TRUE.equals(tx.execute(status -> failInTx(orderId, reason)));
+    }
+
+    private boolean confirmInTx(UUID orderId) {
+        return moveFromPending(orderId, OrderStatus.CONFIRMED, null) == 1;
+    }
+
+    /** PENDING → FAILED plus an OrderFailed outbox row (catalog releases the stock), or nothing if not PENDING. */
+    private boolean failInTx(UUID orderId, String reason) {
+        if (moveFromPending(orderId, OrderStatus.FAILED, reason) == 0) {
+            return false; // no OrderFailed: the stock is released only once, by the transition that really happened
+        }
+        List<OrderFailed.Item> items = jdbc.sql(
+                        "SELECT product_id, quantity FROM order_items WHERE order_id = :id ORDER BY product_id")
+                .param("id", orderId)
+                .query((rs, n) -> new OrderFailed.Item(rs.getLong("product_id"), rs.getInt("quantity")))
+                .list();
+        outbox.add(OrderFailed.TOPIC, orderId, OrderFailed.TYPE, OrderFailed.VERSION,
+                new OrderFailed(orderId, reason, items));
+        return true;
     }
 
     /** @return false if this event was already processed (a redelivery) */

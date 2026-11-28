@@ -7,20 +7,24 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
 
 - [ ] **Reserved stock can still leak.** Incident 003 (step 2.2) fixed the lost event, and a failed order
   transaction now releases its reservations. Still open: catalog times out *after* reserving, or order-service
-  crashes between reserve and commit, so the stock stays reserved with no order.
-  → Saga (2.3), reconciliation job (2.6).
+  crashes between reserve and commit, so the stock stays reserved with no order. The reconciliation job (2.6) can't
+  see these (there is no order row). Fix: reservations with a TTL in catalog (reserved_until + a sweeper), confirmed
+  by the order. → Continuation plan.
 - [ ] **A payment timeout is not proof that nobody was charged** (source: step 2.5). Payments FAILED with
   `PROVIDER_UNAVAILABLE` may have been charged by a real provider after we gave up. Needs a reconciliation job that
-  asks the provider for the final status (refund or confirm) and/or provider webhooks. → With 2.6 or the continuation plan.
-- [ ] **An order can stay PENDING forever** if its payment event never arrives (payment-service down for a long
-  time, or its event parked on a DLT and not replayed yet). → Step 2.6 (stuck-order reconciliation).
+  asks the provider for the final status (refund or confirm) and/or provider webhooks. The 2.6 job only asks
+  payment-service, not the provider. → Continuation plan.
+- [ ] **Charge in flight while the order expires** (source: step 2.6). payment-service writes the payment row only after
+  the provider answers, so `expire` can win while a charge is running: customer charged, order FAILED. Fix: insert a
+  PROCESSING payment row before charging; `expire` then reports "in progress" and the job waits. → Continuation plan.
 - [ ] **Outbox head-of-line blocking.** The relay stops at the first failed row (to keep order). A row that can
   never be published (e.g. payload over `max.request.size`) blocks all later events. Add max attempts + a
-  "parked" state, an alert on `attempts`, or skip rows of other aggregates. → Step 2.6 (not covered by 2.4, which handles consumers).
+  "parked" state, an alert on `attempts`, or skip rows of other aggregates. Not covered by 2.4 (consumers) or 2.6
+  (the job settles the stuck orders, but the relay stays blocked). → Day 4 (alert) / continuation plan.
 - [ ] **No rate limit on login/register** (brute force, credential stuffing, sign-up spam).
   → Step 2.7 (Redis rate limiting in the gateway).
 - [ ] **On the VM, only the gateway may be reachable.** catalog and order trust `X-User-Id` / `X-User-Roles`,
-  and `/internal/inventory/**` has no auth. In compose: publish only the gateway port (and Grafana later),
+  and `/internal/**` (catalog inventory, payment expire) has no auth. In compose: publish only the gateway port (and Grafana later),
   keep services on the internal network. Locally this is done (run-local.sh binds 127.0.0.1).
   → Step 2.8. Optional later: a shared secret or mTLS between services (defence in depth).
 
@@ -30,8 +34,6 @@ Source: Day 1 review (step 1.8, 2026-11-23) unless noted.
   → Not covered by 2.5 (that was the payment provider). Planned: Spring Cloud CircuitBreaker + timeouts on gateway routes, before 2.8.
 - [ ] **VM must not run with the `dev` profile** (it seeds 10k products). run-local.sh defaults to `dev`.
   → Step 2.8 (compose sets the profile explicitly).
-- [ ] **Status changes must stay conditional.** Since 2.3b the saga moves orders with `UPDATE ... WHERE status = 'PENDING'`
-  (no `@Version` needed). The reconciliation job (2.6) must use the same rule, or it can overwrite a saga result.
 
 - [ ] **No alert when messages land on a DLT** (source: step 2.4). Add a metric (DLT end offsets or a counter in
   the recoverer) and a Grafana alert. → Day 4 (step 4.1).
