@@ -1,11 +1,13 @@
 package com.flashsale.order.order;
 
+import com.flashsale.common.event.OrderCreated;
 import com.flashsale.common.web.PageResponse;
 import com.flashsale.order.catalog.CatalogClient;
 import com.flashsale.order.catalog.CatalogClient.Reservation;
 import com.flashsale.order.order.OrderDtos.CreateOrderRequest;
 import com.flashsale.order.order.OrderDtos.OrderLine;
 import com.flashsale.order.order.OrderDtos.OrderResponse;
+import com.flashsale.order.outbox.OutboxWriter;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,6 +18,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class OrderService {
@@ -24,25 +27,29 @@ public class OrderService {
 
     private final OrderRepository orders;
     private final CatalogClient catalog;
-    private final OrderEventPublisher events;
+    private final OutboxWriter outbox;
+    private final TransactionTemplate tx;
     private final Clock clock;
 
-    public OrderService(OrderRepository orders, CatalogClient catalog, OrderEventPublisher events, Clock clock) {
+    public OrderService(OrderRepository orders, CatalogClient catalog, OutboxWriter outbox, TransactionTemplate tx,
+            Clock clock) {
         this.orders = orders;
         this.catalog = catalog;
-        this.events = events;
+        this.outbox = outbox;
+        this.tx = tx;
         this.clock = clock;
     }
 
     /**
-     * Order creation: reserve every item at catalog, save the order as PENDING, then publish OrderCreated.
+     * Order creation: reserve every item at catalog, then in ONE transaction save the order as PENDING and an
+     * outbox row for its OrderCreated event (incident 003). OutboxRelay publishes the event afterwards.
      * The caller gets 202 Accepted: payment happens later, driven by the event.
      *
-     * <p>Not @Transactional on purpose: no DB connection is held while waiting for catalog over HTTP.
-     * The final save runs in its own short transaction (the repository's).
+     * <p>The catalog calls stay outside the transaction on purpose: no DB connection is held while waiting on HTTP.
+     * If the transaction fails, the reservations are released (best effort).
      *
-     * <p>Known gap (dual write, Day 2): if this service crashes or the save fails after the reservations,
-     * the reserved stock is never released. The outbox + saga in steps 2.1–2.3 address this.
+     * <p>Remaining gap: if this service crashes between reserving and committing, the stock stays reserved.
+     * The saga (2.3) and the reconciliation job (2.6) cover that.
      */
     public OrderResponse create(UUID userId, CreateOrderRequest request) {
         List<Reservation> reserved = new ArrayList<>();
@@ -57,9 +64,25 @@ public class OrderService {
 
         Order order = Order.pending(userId, clock.instant());
         reserved.forEach(r -> order.addItem(r.productId(), r.quantity(), r.unitPrice()));
-        Order saved = orders.save(order); // commits here (the repository's own transaction)
-        events.publishCreated(saved);   // second write, to Kafka, after the commit: incident 003
+        Order saved;
+        try {
+            saved = tx.execute(status -> {
+                Order o = orders.save(order); // the UUID id is assigned here
+                outbox.add(OrderCreated.TOPIC, o.getId(), OrderCreated.TYPE, OrderCreated.VERSION, toEvent(o));
+                return o;
+            }); // order + outbox row commit together, or neither does
+        } catch (RuntimeException e) {
+            releaseAll(reserved);
+            throw e;
+        }
         return OrderResponse.from(saved);
+    }
+
+    private static OrderCreated toEvent(Order order) {
+        return new OrderCreated(order.getId(), order.getUserId(), order.getTotalAmount(),
+                order.getItems().stream()
+                        .map(i -> new OrderCreated.Item(i.getProductId(), i.getQuantity(), i.getUnitPrice()))
+                        .toList());
     }
 
     // readOnly transaction: the items are loaded lazily while mapping, which needs an open session.

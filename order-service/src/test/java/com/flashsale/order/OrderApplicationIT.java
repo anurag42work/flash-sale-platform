@@ -36,6 +36,6 @@ class OrderApplicationIT {
                         + "WHERE table_schema = 'public' AND table_name <> 'flyway_schema_history'",
                 String.class);
 
-        assertThat(tables).containsExactlyInAnyOrder("orders", "order_items", "idempotency_keys");
+        assertThat(tables).containsExactlyInAnyOrder("orders", "order_items", "idempotency_keys", "outbox");
     }
 }

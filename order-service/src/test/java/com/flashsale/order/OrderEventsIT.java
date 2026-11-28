@@ -100,7 +100,14 @@ class OrderEventsIT {
         String orderId = (String) response.getBody().get("id");
         List<ConsumerRecord<String, String>> events = eventsFor(orderId);
         assertThat(events).hasSize(1);
-        JsonNode event = json.readTree(events.get(0).value());
+        JsonNode envelope = json.readTree(events.get(0).value());
+        assertThat(envelope.get("type").asText()).isEqualTo("OrderCreated");
+        assertThat(envelope.get("version").asInt()).isEqualTo(1);
+        assertThat(envelope.get("occurredAt").asText()).isNotBlank();
+        String eventId = envelope.get("eventId").asText();
+        assertThat(jdbc.queryForObject("SELECT aggregate_id::text FROM outbox WHERE id = ?::uuid", String.class,
+                eventId)).as("eventId = outbox row id").isEqualTo(orderId);
+        JsonNode event = envelope.get("data");
         assertThat(event.get("orderId").asText()).isEqualTo(orderId);
         assertThat(event.get("userId").asText()).isEqualTo(user.toString());
         assertThat(event.get("totalAmount").decimalValue()).isEqualByComparingTo("20.00");

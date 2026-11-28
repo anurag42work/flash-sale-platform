@@ -20,7 +20,11 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     # Key and value are Strings (Boot's default serializers); the value is the event as JSON.
     producer:
+      # Wait until all in-sync replicas have the event before the send counts as done (the relay marks the row
+      # sent only after that). Idempotence stops the producer's own retries from writing a duplicate.
+      acks: all
       properties:
+        enable.idempotence: true
         # When Kafka is down, send() blocks the HTTP request thread waiting for metadata (default 60 s).
         max.block.ms: 5000
         # Give up on an unacknowledged send after 10 s instead of the default 2 min
@@ -39,6 +43,13 @@ order:
     # Topic order.created. One broker locally and on the VM, so 1 replica.
     partitions: ${ORDER_TOPIC_PARTITIONS:3}
     replicas: ${ORDER_TOPIC_REPLICAS:1}
+
+outbox:
+  # How often the relay looks for unsent events (worst-case extra delay before an event reaches Kafka).
+  poll-interval: ${OUTBOX_POLL_INTERVAL:500ms}
+  batch-size: ${OUTBOX_BATCH_SIZE:100}
+  # Above delivery.timeout.ms (10 s), so the producer gives up first and reports the real error.
+  send-timeout: 15s
 
 catalog:
   # localhost for run-local.sh, the container name on the VM.

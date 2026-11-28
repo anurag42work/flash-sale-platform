@@ -25,7 +25,7 @@ Stack: Java 21, Spring Boot 3.5, Spring Cloud 2025.0, PostgreSQL 16 + Flyway, Re
 |---|---|---|---|---|
 | 001 | Overselling under concurrent reservations | 200 buyers, 50 in stock → 200 sold | Atomic conditional `UPDATE ... WHERE available >= :qty`, `CHECK (available >= 0)` | [incident](docs/incidents/001-overselling.md), [decision](docs/decisions/001-stock-concurrency.md) |
 | 002 | Duplicate orders on client retry | Same request twice → 2 orders, stock taken twice | Required `Idempotency-Key`, stored response replayed | [incident](docs/incidents/002-duplicate-orders.md), [decision](docs/decisions/002-idempotency.md) |
-| 003 | Dual write: order saved, event lost | Kafka send fails after the DB commit → order PENDING, 0 events | Transactional outbox (step 2.2, in progress) | [incident](docs/incidents/003-dual-write.md), [decision](docs/decisions/003-dual-write.md) |
+| 003 | Dual write: order saved, event lost | Kafka send fails after the DB commit → order PENDING, 0 events | Transactional outbox: order + event row in one transaction, `SKIP LOCKED` relay publishes (Kafka paused → all 5 events delivered 690 ms after unpause) | [incident](docs/incidents/003-dual-write.md), [decision](docs/decisions/003-dual-write.md) |
 
 ## Run locally
 
